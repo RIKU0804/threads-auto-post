@@ -43,6 +43,7 @@ export async function POST(req: NextRequest) {
       imagePrompt?: string
       theme?: string
       scheduledAt?: string
+      summary?: string
     }
 
     const { data, error } = await supabase
@@ -55,6 +56,7 @@ export async function POST(req: NextRequest) {
         theme: body.theme ?? null,
         scheduled_at: body.scheduledAt ?? null,
         status: body.scheduledAt ? 'scheduled' : 'draft',
+        summary: body.summary ?? null,
       })
       .select()
       .single()
