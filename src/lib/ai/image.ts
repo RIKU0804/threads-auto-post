@@ -18,7 +18,8 @@ export async function generateDiagramImage({
     minimal:     'Minimal clean design, simple illustration, white background, career and job hunting theme, soft colors',
   }
 
-  const fullPrompt = `${styleGuide[style]}, ${prompt}. No text in Japanese, use simple English labels or numbers only. High quality, suitable for social media.`
+  // ルート側で構造化済みのプロンプトをそのまま使う。スタイルガイドは補足として付加
+  const fullPrompt = `${prompt} Style: ${styleGuide[style]}. High quality, 1:1 square format, suitable for social media.`
 
   // gpt-image-2: response_format 非対応、常に b64_json で返る
   // output_format は SDK 型定義未対応のため any でキャスト

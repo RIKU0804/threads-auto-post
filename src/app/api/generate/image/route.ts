@@ -2,9 +2,52 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createServerSupabaseClient } from '@/lib/supabase'
 import { generateDiagramImage } from '@/lib/ai/image'
 
-function autoImagePrompt(postContent: string): string {
-  const excerpt = postContent.slice(0, 100).replace(/[#\n🎉✅❌💡]/g, ' ').trim()
-  return `Clean infographic diagram about: "${excerpt}". Japanese career and job change topic. Flat design, simple icons, light background, no text, professional style.`
+/**
+ * 投稿本文から画像生成プロンプトを構築する
+ * - タイトル行と番号付きリスト（①②③ or 1.2.3.）を抽出
+ * - gpt-image-2 のテキスト描画能力を活かし、内容を画像に反映させる
+ */
+function buildImagePrompt(postContent: string): string {
+  const lines = postContent
+    .split('\n')
+    .map(l => l.trim())
+    .filter(Boolean)
+
+  // タイトル候補: 【】や「」で囲まれた行、または最初の行
+  const titleLine = lines.find(l => /【.+】|「.+」/.test(l)) ?? lines[0] ?? ''
+  const title = titleLine.replace(/[#【】「」]/g, '').trim().slice(0, 60)
+
+  // 番号付き箇条書きを抽出（①②③ or 1. or ・や→）
+  const bullets = lines
+    .filter(l => /^[①②③④⑤⑥⑦⑧⑨⑩]|^\d+[.．、]|^[・→▶]/.test(l))
+    .map(l => l.replace(/^[①②③④⑤⑥⑦⑧⑨⑩\d][.．、]?\s*/, '').replace(/→.+/, '').trim())
+    .slice(0, 4)
+
+  // ハッシュタグを除いたプレーンな本文から主要キーワード抽出
+  const bodyText = lines
+    .filter(l => !l.startsWith('#') && !l.startsWith('→') && !/^[①-⑩]/.test(l))
+    .join(' ')
+    .replace(/[#【】「」🙌✅❌💡🔥]/g, '')
+    .trim()
+    .slice(0, 80)
+
+  if (bullets.length > 0) {
+    return [
+      `Infographic poster in Japanese career advice style.`,
+      `Title text: "${title}"`,
+      `Show ${bullets.length} numbered points as labeled boxes:`,
+      bullets.map((b, i) => `${i + 1}. "${b}"`).join(', '),
+      `Clean flat design, white background, blue and green accent colors.`,
+      `Include icons next to each point. Modern professional layout.`,
+      `Include English subtitle: "${bodyText.slice(0, 40)}"`,
+    ].join(' ')
+  }
+
+  return [
+    `Infographic poster about: "${title}".`,
+    `Topic: ${bodyText}`,
+    `Japanese career and job change advice. Clean flat design, pastel colors, minimal icons, professional layout.`,
+  ].join(' ')
 }
 
 export async function POST(req: NextRequest) {
@@ -19,7 +62,7 @@ export async function POST(req: NextRequest) {
       style?: 'diagram' | 'infographic' | 'minimal'
     }
 
-    const resolvedPrompt = prompt ?? (postContent ? autoImagePrompt(postContent) : null)
+    const resolvedPrompt = prompt ?? (postContent ? buildImagePrompt(postContent) : null)
     if (!resolvedPrompt) {
       return NextResponse.json({ error: 'prompt か postContent が必要です' }, { status: 400 })
     }
