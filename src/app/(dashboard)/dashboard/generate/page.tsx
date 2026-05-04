@@ -13,10 +13,10 @@ type Step = 'input' | 'preview' | 'done'
 type PostType = 'buzz' | 'empathy' | 'numbers' | 'story' | 'question'
 
 const POST_TYPES: { value: PostType; label: string; desc: string; emoji: string }[] = [
-  { value: 'buzz',     label: 'バズ型',      desc: '逆説・驚き',  emoji: '⚡' },
-  { value: 'empathy',  label: '共感型',      desc: '心の声代弁', emoji: '🤝' },
-  { value: 'numbers',  label: '数字型',      desc: '具体数字',   emoji: '📊' },
-  { value: 'story',    label: 'ストーリー型', desc: '起承転結',   emoji: '📖' },
+  { value: 'buzz',     label: 'バズ型',      desc: '逆説・驚き',   emoji: '⚡' },
+  { value: 'empathy',  label: '共感型',      desc: '心の声代弁',  emoji: '🤝' },
+  { value: 'numbers',  label: '数字型',      desc: '具体数字',    emoji: '📊' },
+  { value: 'story',    label: 'ストーリー型', desc: '起承転結',    emoji: '📖' },
   { value: 'question', label: '問いかけ型',  desc: 'コメント誘導', emoji: '💬' },
 ]
 
@@ -51,21 +51,28 @@ export default function GeneratePage() {
       })
   }, [])
 
+  const isDemoMode = !selectedAccount  // アカウント未選択 = デモモード
+
   async function handleGenerate() {
-    if (!selectedAccount || !theme.trim()) return
+    if (!theme.trim()) return
     setLoading(true)
     try {
       const res = await fetch('/api/generate/text', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ accountId: selectedAccount, theme, postType: postType || undefined }),
+        body: JSON.stringify({
+          accountId: selectedAccount || undefined,
+          theme,
+          postType: postType || undefined,
+        }),
       })
-      const data = await res.json() as { content: string; summary: string }
+      const data = await res.json() as { content: string; summary: string; error?: string }
+      if (data.error) throw new Error(data.error)
       setGeneratedText(data.content)
       setGeneratedSummary(data.summary ?? '')
       setStep('preview')
-    } catch {
-      alert('生成に失敗しました')
+    } catch (e) {
+      alert(e instanceof Error ? e.message : '生成に失敗しました')
     } finally {
       setLoading(false)
     }
@@ -80,10 +87,11 @@ export default function GeneratePage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ postContent: generatedText, style: 'diagram' }),
       })
-      const data = await res.json() as { imageUrl: string }
+      const data = await res.json() as { imageUrl: string; error?: string }
+      if (data.error) throw new Error(data.error)
       setImageUrl(data.imageUrl)
-    } catch {
-      alert('画像生成に失敗しました')
+    } catch (e) {
+      alert(e instanceof Error ? e.message : '画像生成に失敗しました')
     } finally {
       setImageLoading(false)
     }
@@ -96,7 +104,7 @@ export default function GeneratePage() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          accountId: selectedAccount,
+          accountId: selectedAccount || undefined,
           textContent: generatedText,
           imageUrl: imageUrl || undefined,
           theme,
@@ -104,14 +112,15 @@ export default function GeneratePage() {
           summary: generatedSummary || undefined,
         }),
       })
-      const post = await res.json() as Post
+      const post = await res.json() as Post & { error?: string }
+      if (post.error) throw new Error(post.error)
       setSavedPost(post)
-      if (publish) {
+      if (publish && selectedAccount) {
         await fetch(`/api/posts/${post.id}/publish`, { method: 'POST' })
       }
       setStep('done')
-    } catch {
-      alert('保存に失敗しました')
+    } catch (e) {
+      alert(e instanceof Error ? e.message : '保存に失敗しました')
     } finally {
       setLoading(false)
     }
@@ -179,17 +188,37 @@ export default function GeneratePage() {
       {step === 'input' && (
         <div className="space-y-5">
           <Card className="space-y-4">
+            {/* アカウント選択 */}
             <div>
               <SectionLabel>アカウント</SectionLabel>
-              <select
-                value={selectedAccount}
-                onChange={e => setSelectedAccount(e.target.value)}
-                className="w-full appearance-none rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-hidden transition focus:border-[#00A3BF] focus:ring-2 focus:ring-[#00A3BF]/20"
-              >
-                {accounts.length === 0 && <option value="">アカウントを先に登録してください</option>}
-                {accounts.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
-              </select>
+              {accounts.length === 0 ? (
+                <div className="flex items-center gap-2 rounded-md border border-[#e5edf5] bg-[#F8FAFC] px-3 py-2">
+                  <span className="inline-flex items-center gap-1.5 rounded-full bg-[#E9F7F9] px-2 py-0.5 text-xs font-medium text-[#006F83]">
+                    デモモード
+                  </span>
+                  <span className="text-sm text-gray-500">デフォルト設定で生成します</span>
+                </div>
+              ) : (
+                <select
+                  value={selectedAccount}
+                  onChange={e => setSelectedAccount(e.target.value)}
+                  className="w-full appearance-none rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-hidden transition focus:border-[#00A3BF] focus:ring-2 focus:ring-[#00A3BF]/20"
+                >
+                  <option value="">デモモード（デフォルト設定）</option>
+                  {accounts.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+                </select>
+              )}
             </div>
+
+            {/* デモモード時の説明 */}
+            {isDemoMode && (
+              <div className="rounded-md border border-[#e5edf5] bg-[#F8FAFC] px-3 py-2.5 text-xs text-gray-500 leading-relaxed">
+                <span className="font-medium text-gray-600">デモモードの設定：</span>
+                　転職ノウハウ発信者 / 高卒20代向け / フランクな文体
+              </div>
+            )}
+
+            {/* テーマ入力 */}
             <div>
               <SectionLabel>投稿テーマ</SectionLabel>
               <Input
@@ -235,7 +264,7 @@ export default function GeneratePage() {
 
           <Button
             onClick={handleGenerate}
-            disabled={!selectedAccount || !theme.trim()}
+            disabled={!theme.trim()}
             isLoading={loading}
             loadingText="生成中..."
             className="w-full gap-2 py-2.5"
@@ -246,9 +275,22 @@ export default function GeneratePage() {
         </div>
       )}
 
-      {/* Step 2 */}
+      {/* Step 2: プレビュー */}
       {step === 'preview' && (
         <div className="space-y-4">
+          {/* デモモードバナー */}
+          {isDemoMode && (
+            <div className="flex items-center justify-between rounded-md border border-[#e5edf5] bg-[#F8FAFC] px-4 py-2.5">
+              <div className="flex items-center gap-2">
+                <span className="rounded-full bg-[#E9F7F9] px-2 py-0.5 text-xs font-medium text-[#006F83]">
+                  デモモード
+                </span>
+                <span className="text-xs text-gray-500">下書き保存のみ可能です</span>
+              </div>
+              <span className="text-xs text-gray-400">アカウントを追加すると投稿できます</span>
+            </div>
+          )}
+
           {/* Text */}
           <Card className="space-y-3">
             <div className="flex items-center justify-between">
@@ -280,7 +322,9 @@ export default function GeneratePage() {
           {/* Image */}
           <Card className="space-y-3">
             <div className="flex items-center justify-between">
-              <SectionLabel>図解画像</SectionLabel>
+              <div>
+                <SectionLabel>図解画像</SectionLabel>
+              </div>
               <button
                 onClick={handleGenerateImage}
                 disabled={imageLoading}
@@ -295,22 +339,24 @@ export default function GeneratePage() {
             ) : (
               <div className="flex h-32 flex-col items-center justify-center gap-2 rounded-md border-2 border-dashed border-[#e5edf5]">
                 <ImageIcon className="h-5 w-5 text-gray-300" />
-                <span className="text-xs text-gray-400">「図解を生成」で追加</span>
+                <span className="text-xs text-gray-400">「図解を生成」ボタンで追加（任意・有料）</span>
               </div>
             )}
           </Card>
 
-          {/* Schedule */}
-          <Card className="space-y-2">
-            <SectionLabel>予約投稿</SectionLabel>
-            <input
-              type="datetime-local"
-              value={scheduledAt}
-              onChange={e => setScheduledAt(e.target.value)}
-              className="rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-900 outline-hidden transition focus:border-[#00A3BF] focus:ring-2 focus:ring-[#00A3BF]/20"
-            />
-            {!scheduledAt && <p className="text-xs text-gray-400">空白の場合は下書き保存になります</p>}
-          </Card>
+          {/* Schedule — アカウントがある場合のみ */}
+          {!isDemoMode && (
+            <Card className="space-y-2">
+              <SectionLabel>予約投稿</SectionLabel>
+              <input
+                type="datetime-local"
+                value={scheduledAt}
+                onChange={e => setScheduledAt(e.target.value)}
+                className="rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-900 outline-hidden transition focus:border-[#00A3BF] focus:ring-2 focus:ring-[#00A3BF]/20"
+              />
+              {!scheduledAt && <p className="text-xs text-gray-400">空白の場合は下書き保存になります</p>}
+            </Card>
+          )}
 
           {/* Actions */}
           <div className="flex gap-3">
@@ -321,18 +367,20 @@ export default function GeneratePage() {
               className="flex-1 gap-2"
             >
               <Save className="h-4 w-4" />
-              {scheduledAt ? '予約保存' : '下書き保存'}
+              {isDemoMode ? '下書き保存' : scheduledAt ? '予約保存' : '下書き保存'}
             </Button>
-            <Button
-              onClick={() => handleSave(true)}
-              disabled={loading || !!scheduledAt}
-              isLoading={loading}
-              loadingText="投稿中..."
-              className="flex-1 gap-2"
-            >
-              <Send className="h-4 w-4" />
-              今すぐ投稿
-            </Button>
+            {!isDemoMode && (
+              <Button
+                onClick={() => handleSave(true)}
+                disabled={loading || !!scheduledAt}
+                isLoading={loading}
+                loadingText="投稿中..."
+                className="flex-1 gap-2"
+              >
+                <Send className="h-4 w-4" />
+                今すぐ投稿
+              </Button>
+            )}
           </div>
         </div>
       )}

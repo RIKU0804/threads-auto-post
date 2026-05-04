@@ -21,7 +21,8 @@ export interface Account {
 
 export interface Post {
   id: string
-  account_id: string
+  user_id: string | null
+  account_id: string | null
   text_content: string | null
   image_url: string | null
   image_prompt: string | null

@@ -37,7 +37,7 @@ export async function POST(req: NextRequest) {
     if (!user) return NextResponse.json({ error: '認証が必要です' }, { status: 401 })
 
     const body = await req.json() as {
-      accountId: string
+      accountId?: string
       textContent: string
       imageUrl?: string
       imagePrompt?: string
@@ -49,7 +49,8 @@ export async function POST(req: NextRequest) {
     const { data, error } = await supabase
       .from('posts')
       .insert({
-        account_id: body.accountId,
+        user_id: user.id,                        // 常にセット（デモ投稿の所有者追跡）
+        account_id: body.accountId ?? null,      // アカウントなしはnull
         text_content: body.textContent,
         image_url: body.imageUrl ?? null,
         image_prompt: body.imagePrompt ?? null,
