@@ -1,4 +1,5 @@
 import OpenAI from 'openai'
+import { createClient } from '@supabase/supabase-js'
 
 interface GenerateImageOptions {
   prompt: string
@@ -19,16 +20,37 @@ export async function generateDiagramImage({
 
   const fullPrompt = `${styleGuide[style]}, ${prompt}. No text in Japanese, use simple English labels or numbers only. High quality, suitable for social media.`
 
+  // gpt-image-2 は b64_json で受け取る（URL形式は500エラーになる場合あり）
   const response = await client.images.generate({
     model: 'gpt-image-2',
     prompt: fullPrompt,
     n: 1,
     size: '1024x1024',
     quality: 'medium',
+    response_format: 'b64_json',
   })
 
-  const imageUrl = response.data?.[0]?.url
-  if (!imageUrl) throw new Error('画像生成に失敗しました')
+  const b64 = response.data?.[0]?.b64_json
+  if (!b64) throw new Error('画像生成に失敗しました')
 
-  return imageUrl
+  // Supabase Storageに保存してパブリックURLを返す
+  const supabase = createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY!,
+  )
+
+  const fileName = `generated/${Date.now()}-${Math.random().toString(36).slice(2)}.png`
+  const buffer = Buffer.from(b64, 'base64')
+
+  const { error } = await supabase.storage
+    .from('post-images')
+    .upload(fileName, buffer, { contentType: 'image/png', upsert: false })
+
+  if (error) throw new Error(`Storage upload failed: ${error.message}`)
+
+  const { data: { publicUrl } } = supabase.storage
+    .from('post-images')
+    .getPublicUrl(fileName)
+
+  return publicUrl
 }
