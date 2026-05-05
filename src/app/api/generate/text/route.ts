@@ -20,6 +20,8 @@ const DEMO_ACCOUNT: Account = {
   threads_client_secret: null,
   heygen_avatar_id: null,
   heygen_voice_id: null,
+  x_user_id: null,
+  x_refresh_token: null,
   is_active: false,
   created_at: '',
   updated_at: '',
