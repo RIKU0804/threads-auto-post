@@ -42,9 +42,9 @@ export async function POST(req: NextRequest) {
       resolvedVoiceId = resolvedVoiceId || acc?.heygen_voice_id || undefined
     }
 
-    if (!resolvedAvatarId) {
+    if (!resolvedAvatarId && !lookId) {
       return NextResponse.json(
-        { error: 'avatarId が必要です（アカウントに設定するか引数で渡してください）' },
+        { error: 'avatarId または lookId が必要です' },
         { status: 400 },
       )
     }

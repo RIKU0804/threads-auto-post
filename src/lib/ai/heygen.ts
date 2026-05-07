@@ -102,8 +102,9 @@ export async function listAvatars(): Promise<HeygenAvatar[]> {
 
 export interface GenerateVideoOptions {
   text: string
-  avatarId: string
-  /** アバターの特定Look（衣装・背景）ID。省略時はデフォルトLook */
+  /** base avatar ID。lookIdだけで動くstock avatarの場合は省略可 */
+  avatarId?: string
+  /** Look ID（衣装・背景）。HeyGenのURLの?avatarId=xxx はこちらに入れる */
   lookId?: string
   /** HeyGen Voice ID（audioUrl未指定時に必須） */
   voiceId?: string
@@ -130,6 +131,9 @@ export async function startVideoGeneration(opts: GenerateVideoOptions): Promise<
     background,
   } = opts
 
+  if (!avatarId && !lookId) {
+    throw new Error('avatarId または lookId が必要です')
+  }
   if (!audioUrl && !voiceId) {
     throw new Error('voiceId か audioUrl のどちらかが必要です')
   }
@@ -138,15 +142,20 @@ export async function startVideoGeneration(opts: GenerateVideoOptions): Promise<
     ? { type: 'audio', audio_url: audioUrl }
     : { type: 'text', input_text: text, voice_id: voiceId }
 
+  // stock/public avatar は look_id のみで動く場合がある
+  const character: Record<string, unknown> = {
+    type: 'avatar',
+    avatar_style: avatarStyle,
+    ...(avatarId ? { avatar_id: avatarId } : {}),
+    ...(lookId ? { look_id: lookId } : {}),
+  }
+
+  console.log('[heygen] character payload:', JSON.stringify(character))
+
   const body: Record<string, unknown> = {
     video_inputs: [
       {
-        character: {
-          type: 'avatar',
-          avatar_id: avatarId,
-          avatar_style: avatarStyle,
-          ...(lookId ? { look_id: lookId } : {}),
-        },
+        character,
         voice,
         ...(background ? { background } : {}),
       },

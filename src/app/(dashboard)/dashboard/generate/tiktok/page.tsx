@@ -208,7 +208,8 @@ export default function TikTokGeneratePage() {
   }
 
   async function handleGenerateVideo() {
-    if (!generatedScript || !heygenAvatarId) return
+    if (!generatedScript) return
+    if (!heygenAvatarId && !heygenLookId) return
     if (!audioUrl && !heygenVoiceId) return
     setVideoLoading(true)
     try {
@@ -554,7 +555,7 @@ export default function TikTokGeneratePage() {
               </div>
               <button
                 onClick={handleGenerateVideo}
-                disabled={videoLoading || !generatedScript || !heygenAvatarId || (!heygenVoiceId && !audioUrl)}
+                disabled={videoLoading || !generatedScript || (!heygenAvatarId && !heygenLookId) || (!heygenVoiceId && !audioUrl)}
                 className="flex items-center gap-1 text-xs font-medium text-violet-600 hover:text-violet-700 disabled:opacity-50"
               >
                 {videoLoading
@@ -567,7 +568,10 @@ export default function TikTokGeneratePage() {
             {/* Avatar ID */}
             <div>
               <div className="mb-1 flex items-center justify-between">
-                <label className="text-xs font-medium text-gray-500">アバター</label>
+                <label className="text-xs font-medium text-gray-500">
+                  Avatar ID
+                  <span className="ml-1 font-normal text-gray-400">（またはLook IDのみでもOK）</span>
+                </label>
                 <button
                   type="button"
                   onClick={openAvatarPicker}
@@ -583,9 +587,12 @@ export default function TikTokGeneratePage() {
                   setHeygenAvatarId(e.target.value)
                   localStorage.setItem('heygen_avatar_id', e.target.value)
                 }}
-                placeholder="アバターを選択 または IDを直接入力"
+                placeholder="例：b81ecd3f96274a89b7fedfdefae05bbe"
                 className="w-full rounded-md border border-gray-300 bg-white px-3 py-1.5 text-xs text-gray-900 outline-hidden transition focus:border-violet-400 focus:ring-2 focus:ring-violet-200"
               />
+              <p className="mt-1 text-[11px] text-gray-400">
+                HeyGenのURL: <code className="bg-gray-100 px-1 rounded">?avatarId=xxx</code> の値をそのまま入力でOK
+              </p>
             </div>
 
             {/* Voice ID */}
