@@ -177,8 +177,6 @@ export default function AccountsPage() {
   const [showSecret, setShowSecret] = useState(false)
   const [connecting, setConnecting] = useState(false)
   const [formError, setFormError] = useState('')
-  const [defaultAppId, setDefaultAppId] = useState('')
-  const [hasDefaultSecret, setHasDefaultSecret] = useState(false)
   const [form, setForm] = useState({
     name: '',
     persona: PERSONAS[0].value,
@@ -191,18 +189,13 @@ export default function AccountsPage() {
 
   useEffect(() => {
     fetch('/api/accounts').then(r => r.json()).then(setAccounts).catch(() => {})
-    fetch('/api/config').then(r => r.json()).then((d: { threadsAppId?: string; hasThreadsAppSecret?: boolean }) => {
-      if (d.threadsAppId) setDefaultAppId(d.threadsAppId)
-      if (d.hasThreadsAppSecret) setHasDefaultSecret(true)
-    }).catch(() => {})
   }, [])
 
   async function handleConnect() {
     setFormError('')
     if (!form.name.trim()) { setFormError('アカウント名を入力してください'); return }
-    // env変数で設定済みの場合はスキップ（サーバー側でフォールバック）
-    if (!form.clientId.trim() && !defaultAppId) { setFormError('Client IDを入力してください'); return }
-    if (!form.clientSecret.trim() && !hasDefaultSecret) { setFormError('Client Secretを入力してください'); return }
+    if (!form.clientId.trim()) { setFormError('Client IDを入力してください'); return }
+    if (!form.clientSecret.trim()) { setFormError('Client Secretを入力してください'); return }
 
     setConnecting(true)
     try {
@@ -371,21 +364,21 @@ export default function AccountsPage() {
                 <div className="rounded-lg border border-gray-200 bg-gray-50 p-4 space-y-3">
                   <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Meta App 設定</p>
                   <div>
-                    <FieldLabel optional>Client ID</FieldLabel>
+                    <FieldLabel>Client ID</FieldLabel>
                     <Input
                       value={form.clientId}
                       onChange={e => setForm(f => ({ ...f, clientId: e.target.value }))}
-                      placeholder={defaultAppId ? `デフォルト: ${defaultAppId}` : '例：1234567890123456'}
+                      placeholder="例：1234567890123456"
                     />
                   </div>
                   <div>
-                    <FieldLabel optional>Client Secret</FieldLabel>
+                    <FieldLabel>Client Secret</FieldLabel>
                     <div className="relative">
                       <Input
                         type={showSecret ? 'text' : 'password'}
                         value={form.clientSecret}
                         onChange={e => setForm(f => ({ ...f, clientSecret: e.target.value }))}
-                        placeholder={hasDefaultSecret ? 'デフォルト値が設定されています' : '例：abcdef1234567890abcdef1234567890'}
+                        placeholder="例：abcdef1234567890abcdef1234567890"
                         className="pr-10"
                       />
                       <button
@@ -398,10 +391,8 @@ export default function AccountsPage() {
                     </div>
                   </div>
                   <p className="text-[11px] text-gray-400 leading-relaxed">
-                    {defaultAppId && hasDefaultSecret
-                      ? '空のままでもデフォルトAppで連携できます。別のMeta Appを使う場合のみ入力してください。'
-                      : <><a href="https://developers.facebook.com/apps" target="_blank" rel="noopener noreferrer" className="text-[#00A3BF] underline underline-offset-2">Meta for Developers</a>でアプリを作成し、Threads APIを有効化してください。</>
-                    }
+                    <a href="https://developers.facebook.com/apps" target="_blank" rel="noopener noreferrer" className="text-[#00A3BF] underline underline-offset-2">Meta for Developers</a>
+                    でアプリを作成し、Threads APIを有効化してください。
                   </p>
                 </div>
 

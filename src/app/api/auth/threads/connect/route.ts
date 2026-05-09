@@ -26,8 +26,8 @@ export async function POST(req: NextRequest) {
     clientSecret: bodyClientSecret = '',
   } = body
 
-  const clientId = bodyClientId.trim() || process.env.THREADS_APP_ID || ''
-  const clientSecret = bodyClientSecret.trim() || process.env.THREADS_APP_SECRET || ''
+  const clientId = bodyClientId.trim()
+  const clientSecret = bodyClientSecret.trim()
 
   if (!clientId || !clientSecret) {
     return NextResponse.json({ error: 'Client ID と Client Secret を入力してください' }, { status: 400 })
