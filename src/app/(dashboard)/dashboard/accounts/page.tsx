@@ -2,7 +2,7 @@
 
 import { useEffect, useState, Suspense } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
-import { Plus, User, X, CheckCircle, AlertCircle, Eye, EyeOff, BookOpen, Video, Sparkles } from 'lucide-react'
+import { Plus, User, X, CheckCircle, AlertCircle, Eye, EyeOff, BookOpen } from 'lucide-react'
 import { Card } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
@@ -171,20 +171,9 @@ function ReferenceAccountsSection() {
   )
 }
 
-type Platform = 'threads' | 'tiktok'
-
-interface VoiceOption {
-  voice_id: string
-  name: string
-  gender: string
-  language: string
-  preview_audio?: string
-}
-
 export default function AccountsPage() {
   const [accounts, setAccounts] = useState<Account[]>([])
   const [showForm, setShowForm] = useState(false)
-  const [platform, setPlatform] = useState<Platform>('threads')
   const [showSecret, setShowSecret] = useState(false)
   const [connecting, setConnecting] = useState(false)
   const [formError, setFormError] = useState('')
@@ -198,12 +187,7 @@ export default function AccountsPage() {
     postTopics: '転職ノウハウ、キャリア相談、仕事の悩み',
     clientId: '',
     clientSecret: '',
-    heygenAvatarId: '',
-    heygenVoiceId: '',
   })
-  const [voices, setVoices] = useState<VoiceOption[]>([])
-  const [voicesLoading, setVoicesLoading] = useState(false)
-  const [previewingVoice, setPreviewingVoice] = useState<string>('')
 
   useEffect(() => {
     fetch('/api/accounts').then(r => r.json()).then(setAccounts).catch(() => {})
@@ -213,71 +197,12 @@ export default function AccountsPage() {
     }).catch(() => {})
   }, [])
 
-  // TikTokタブを開いたら音声一覧をロード
-  useEffect(() => {
-    if (platform !== 'tiktok' || voices.length > 0) return
-    setVoicesLoading(true)
-    fetch('/api/heygen/voices?language=Japanese')
-      .then(r => r.json())
-      .then((d: { voices?: VoiceOption[] }) => {
-        setVoices(Array.isArray(d.voices) ? d.voices : [])
-      })
-      .catch(() => {})
-      .finally(() => setVoicesLoading(false))
-  }, [platform, voices.length])
-
-  function handlePreviewVoice(voiceId: string, audioUrl?: string) {
-    if (!audioUrl) return
-    setPreviewingVoice(voiceId)
-    const audio = new Audio(audioUrl)
-    audio.onended = () => setPreviewingVoice('')
-    audio.onerror = () => setPreviewingVoice('')
-    audio.play().catch(() => setPreviewingVoice(''))
-  }
-
-  async function handleCreateTikTok() {
-    setFormError('')
-    if (!form.name.trim()) { setFormError('アカウント名を入力してください'); return }
-    if (!form.heygenAvatarId.trim()) { setFormError('HeyGen Avatar IDを入力してください'); return }
-    if (!form.heygenVoiceId.trim()) { setFormError('HeyGen Voiceを選択してください'); return }
-
-    setConnecting(true)
-    try {
-      const res = await fetch('/api/accounts', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          platform: 'tiktok',
-          name: form.name,
-          persona: form.persona,
-          tone: form.tone,
-          targetAudience: form.targetAudience,
-          postTopics: form.postTopics,
-          heygenAvatarId: form.heygenAvatarId.trim(),
-          heygenVoiceId: form.heygenVoiceId.trim(),
-        }),
-      })
-      const data = await res.json() as Account & { error?: string }
-      if (!res.ok || data.error) {
-        setFormError(data.error ?? 'アカウントの作成に失敗しました')
-        return
-      }
-      setAccounts(prev => [data, ...prev])
-      setShowForm(false)
-      // フォームリセット
-      setForm(f => ({ ...f, name: '', heygenAvatarId: '', heygenVoiceId: '' }))
-    } catch {
-      setFormError('アカウントの作成に失敗しました')
-    } finally {
-      setConnecting(false)
-    }
-  }
-
   async function handleConnect() {
     setFormError('')
     if (!form.name.trim()) { setFormError('アカウント名を入力してください'); return }
-    if (!form.clientId.trim()) { setFormError('Client IDを入力してください'); return }
-    if (!form.clientSecret.trim()) { setFormError('Client Secretを入力してください'); return }
+    // env変数で設定済みの場合はスキップ（サーバー側でフォールバック）
+    if (!form.clientId.trim() && !defaultAppId) { setFormError('Client IDを入力してください'); return }
+    if (!form.clientSecret.trim() && !hasDefaultSecret) { setFormError('Client Secretを入力してください'); return }
 
     setConnecting(true)
     try {
@@ -346,23 +271,13 @@ export default function AccountsPage() {
             <Card key={account.id} className="p-5">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
-                  <div className={cx(
-                    'flex h-9 w-9 shrink-0 items-center justify-center rounded-lg',
-                    account.platform === 'tiktok' ? 'bg-purple-50' : 'bg-[#E9F7F9]',
-                  )}>
-                    {account.platform === 'tiktok'
-                      ? <Video className="h-4 w-4 text-purple-600" />
-                      : <User className="h-4 w-4 text-[#00A3BF]" />}
+                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[#E9F7F9]">
+                    <User className="h-4 w-4 text-[#00A3BF]" />
                   </div>
                   <div>
                     <div className="flex items-center gap-2">
                       <p className="text-sm font-semibold text-gray-900">{account.name}</p>
-                      <span className={cx(
-                        'rounded-full px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider',
-                        account.platform === 'tiktok'
-                          ? 'bg-purple-50 text-purple-700'
-                          : 'bg-[#E9F7F9] text-[#006F83]',
-                      )}>
+                      <span className="rounded-full px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider bg-[#E9F7F9] text-[#006F83]">
                         {account.platform}
                       </span>
                     </div>
@@ -414,25 +329,6 @@ export default function AccountsPage() {
               </button>
             </div>
 
-            {/* Platform selector tabs */}
-            <div className="flex gap-1 border-b border-gray-100 bg-gray-50 px-6 py-2">
-              {(['threads', 'tiktok'] as const).map(p => (
-                <button
-                  key={p}
-                  onClick={() => { setPlatform(p); setFormError('') }}
-                  className={cx(
-                    'flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-all',
-                    platform === p
-                      ? 'bg-white text-gray-900 shadow-sm ring-1 ring-gray-200'
-                      : 'text-gray-500 hover:text-gray-700',
-                  )}
-                >
-                  {p === 'threads' ? <Sparkles className="h-3.5 w-3.5" /> : <Video className="h-3.5 w-3.5" />}
-                  {p === 'threads' ? 'Threads（テキスト・画像）' : 'TikTok（アバター動画）'}
-                </button>
-              ))}
-            </div>
-
             <div className="max-h-[calc(90vh-120px)] overflow-y-auto p-6">
               <div className="space-y-4">
                 <div>
@@ -471,8 +367,7 @@ export default function AccountsPage() {
                   />
                 </div>
 
-                {/* Meta App credentials (Threads時のみ) */}
-                {platform === 'threads' && (
+                {/* Meta App credentials */}
                 <div className="rounded-lg border border-gray-200 bg-gray-50 p-4 space-y-3">
                   <div className="flex items-center justify-between">
                     <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Meta App 設定</p>
@@ -528,67 +423,6 @@ export default function AccountsPage() {
                     </>
                   )}
                 </div>
-                )}
-
-                {/* HeyGen 設定 (TikTok時のみ) */}
-                {platform === 'tiktok' && (
-                  <div className="rounded-lg border border-purple-200 bg-purple-50/30 p-4 space-y-3">
-                    <p className="text-xs font-semibold text-purple-700 uppercase tracking-wider">HeyGen 設定</p>
-                    <div>
-                      <FieldLabel>HeyGen Avatar ID</FieldLabel>
-                      <Input
-                        value={form.heygenAvatarId}
-                        onChange={e => setForm(f => ({ ...f, heygenAvatarId: e.target.value }))}
-                        placeholder="例：c86d425d40be4a1eacd1749098bd085b"
-                      />
-                      <p className="mt-1 text-[10px] text-gray-400">
-                        HeyGen → Avatars → 作成したアバター → ID をコピー
-                      </p>
-                    </div>
-                    <div>
-                      <FieldLabel>音声（日本語）</FieldLabel>
-                      {voicesLoading ? (
-                        <div className="rounded-md border border-gray-200 bg-white px-3 py-2 text-xs text-gray-400">
-                          音声一覧を読み込み中...
-                        </div>
-                      ) : voices.length === 0 ? (
-                        <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
-                          ⚠️ 音声を取得できませんでした。HEYGEN_API_KEY が設定されているか確認してください
-                        </div>
-                      ) : (
-                        <>
-                          <SelectNative
-                            value={form.heygenVoiceId}
-                            onChange={e => setForm(f => ({ ...f, heygenVoiceId: e.target.value }))}
-                          >
-                            <option value="">— 選択してください —</option>
-                            {voices.map(v => (
-                              <option key={v.voice_id} value={v.voice_id}>
-                                {v.name}（{v.gender === 'male' ? '男性' : v.gender === 'female' ? '女性' : v.gender}）
-                              </option>
-                            ))}
-                          </SelectNative>
-                          {form.heygenVoiceId && (() => {
-                            const voice = voices.find(v => v.voice_id === form.heygenVoiceId)
-                            return voice?.preview_audio ? (
-                              <button
-                                type="button"
-                                onClick={() => handlePreviewVoice(voice.voice_id, voice.preview_audio)}
-                                disabled={previewingVoice === voice.voice_id}
-                                className="mt-1.5 text-[11px] text-purple-600 hover:text-purple-800 underline-offset-2 hover:underline disabled:opacity-50"
-                              >
-                                {previewingVoice === voice.voice_id ? '🔊 再生中...' : '▶ プレビュー再生'}
-                              </button>
-                            ) : null
-                          })()}
-                        </>
-                      )}
-                    </div>
-                    <p className="text-[11px] text-gray-400 leading-relaxed">
-                      動画は <strong>1080×1920（縦・TikTok向け）</strong> で生成され、字幕が自動で焼き込まれます。
-                    </p>
-                  </div>
-                )}
 
                 {formError && (
                   <p className="flex items-center gap-1.5 text-xs text-red-500">
@@ -599,9 +433,7 @@ export default function AccountsPage() {
 
                 <div className="border-t border-gray-100 pt-2">
                   <p className="mb-3 text-xs text-gray-400">
-                    {platform === 'threads'
-                      ? '「Threadsで連携」を押すとMetaの認可画面に移動します。認可後、自動でアカウントが作成されます。'
-                      : '「アカウントを作成」を押すとTikTok用アカウントが作成されます。動画は手動でTikTokアプリにアップロードします。'}
+                    「Threadsで連携」を押すとMetaの認可画面に移動します。認可後、自動でアカウントが作成されます。
                   </p>
                 </div>
 
@@ -615,33 +447,19 @@ export default function AccountsPage() {
                   >
                     キャンセル
                   </Button>
-                  {platform === 'threads' ? (
-                    <Button
-                      type="button"
-                      onClick={handleConnect}
-                      disabled={!form.name.trim() || connecting}
-                      isLoading={connecting}
-                      loadingText="接続中..."
-                      className="flex-1 gap-2"
-                    >
-                      <svg className="h-4 w-4" viewBox="0 0 24 24" fill="currentColor">
-                        <path d="M12.545 10.239v3.821h5.445c-.712 2.315-2.647 3.972-5.445 3.972a6.033 6.033 0 110-12.064c1.498 0 2.866.549 3.921 1.453l2.814-2.814A9.969 9.969 0 0012.545 2C7.021 2 2.543 6.477 2.543 12s4.478 10 10.002 10c8.396 0 10.249-7.85 9.426-11.748z"/>
-                      </svg>
-                      Threadsで連携
-                    </Button>
-                  ) : (
-                    <Button
-                      type="button"
-                      onClick={handleCreateTikTok}
-                      disabled={!form.name.trim() || connecting}
-                      isLoading={connecting}
-                      loadingText="作成中..."
-                      className="flex-1 gap-2"
-                    >
-                      <Video className="h-4 w-4" />
-                      アカウントを作成
-                    </Button>
-                  )}
+                  <Button
+                    type="button"
+                    onClick={handleConnect}
+                    disabled={!form.name.trim() || connecting}
+                    isLoading={connecting}
+                    loadingText="接続中..."
+                    className="flex-1 gap-2"
+                  >
+                    <svg className="h-4 w-4" viewBox="0 0 24 24" fill="currentColor">
+                      <path d="M12.545 10.239v3.821h5.445c-.712 2.315-2.647 3.972-5.445 3.972a6.033 6.033 0 110-12.064c1.498 0 2.866.549 3.921 1.453l2.814-2.814A9.969 9.969 0 0012.545 2C7.021 2 2.543 6.477 2.543 12s4.478 10 10.002 10c8.396 0 10.249-7.85 9.426-11.748z"/>
+                    </svg>
+                    Threadsで連携
+                  </Button>
                 </div>
               </div>
             </div>
