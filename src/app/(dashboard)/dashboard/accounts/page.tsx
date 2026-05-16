@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { Plus, User, X, AlertCircle, Eye, EyeOff, BookOpen, MessageCircle, Camera, ExternalLink } from 'lucide-react'
+import { Plus, User, X, AlertCircle, Eye, EyeOff, BookOpen, MessageCircle, Camera } from 'lucide-react'
 import { Card } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
@@ -168,57 +168,9 @@ export default function AccountsPage() {
     clientId: '',
     clientSecret: '',
   })
-  const [oauthLoading, setOauthLoading] = useState(false)
-
   useEffect(() => {
     fetch('/api/accounts').then(r => r.json()).then(setAccounts).catch(() => {})
   }, [])
-
-  useEffect(() => {
-    // URL クエリパラメータから OAuth 結果を読む
-    // useSearchParams() は Suspense 境界が要るためここでは window.location を使う
-    if (typeof window === 'undefined') return
-    const params = new URLSearchParams(window.location.search)
-    const err = params.get('error')
-    const ok = params.get('connected')
-    if (ok === 'x') {
-      setSuccessMsg('X アカウントを連携しました')
-      setTimeout(() => setSuccessMsg(''), 4000)
-    } else if (err) {
-      setFormError(`X 連携に失敗しました: ${err}`)
-      setShowForm(true)
-      setPlatform('x')
-    }
-  }, [])
-
-  async function handleXOAuth() {
-    setFormError('')
-    if (!form.name.trim()) { setFormError('アカウント名を入力してください'); return }
-    setOauthLoading(true)
-    try {
-      const res = await fetch('/api/auth/x/connect', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name: form.name,
-          persona: form.persona,
-          tone: form.tone,
-          targetAudience: form.targetAudience,
-          postTopics: form.postTopics,
-        }),
-      })
-      const data = await res.json() as { url?: string; error?: string }
-      if (!res.ok || !data.url) {
-        setFormError(data.error ?? 'OAuth URL の発行に失敗しました')
-        return
-      }
-      window.location.href = data.url
-    } catch {
-      setFormError('OAuth 開始に失敗しました')
-    } finally {
-      setOauthLoading(false)
-    }
-  }
 
   function resetForm() {
     setForm({
@@ -463,38 +415,12 @@ export default function AccountsPage() {
                   />
                 </div>
 
-                {/* X: OAuth ボタン */}
-                {platform === 'x' && (
-                  <div className="rounded-lg border border-gray-200 bg-gray-50 p-4">
-                    <p className="mb-2 text-xs font-semibold text-gray-500 uppercase tracking-wider">
-                      かんたん連携（推奨）
-                    </p>
-                    <p className="mb-3 text-xs text-gray-500">
-                      X の OAuth 2.0 (PKCE) で連携します。トークンの取得・自動リフレッシュも含めて全自動です。
-                    </p>
-                    <Button
-                      type="button"
-                      onClick={handleXOAuth}
-                      disabled={!form.name.trim() || oauthLoading}
-                      isLoading={oauthLoading}
-                      loadingText="リダイレクト中..."
-                      className="w-full gap-2"
-                    >
-                      <ExternalLink className="h-4 w-4" />
-                      X で連携する
-                    </Button>
-                    <p className="mt-2 text-[10px] text-gray-400">
-                      アカウント名を入力した上で押してください。X の認可ページへ遷移します。
-                    </p>
-                  </div>
-                )}
-
                 {/* API credentials */}
                 <div className="rounded-lg border border-gray-200 bg-gray-50 p-4 space-y-3">
                   <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider">
                     {platform === 'threads' ? 'Threads API 設定'
                       : platform === 'instagram' ? 'Instagram API 設定'
-                      : 'X API 設定（手動）'}
+                      : 'X API 設定'}
                   </p>
 
                   <div>

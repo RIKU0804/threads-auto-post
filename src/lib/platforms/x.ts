@@ -1,12 +1,10 @@
 // X (Twitter) API v2 adapter
 // Docs: https://developer.twitter.com/en/docs/twitter-api/tweets/manage-tweets/api-reference/post-tweets
+// OAuth フローは廃止。アクセストークンは手動入力で受け取り、必要なら refresh のみ実行。
 
 const X_API_BASE = 'https://api.twitter.com/2'
-const X_AUTH_BASE = 'https://twitter.com/i/oauth2'
 const X_TOKEN_URL = 'https://api.twitter.com/2/oauth2/token'
 const REQUEST_TIMEOUT_MS = 30_000
-
-export const X_SCOPES = 'tweet.write tweet.read users.read offline.access'
 
 export interface XTokens {
   accessToken: string
@@ -89,11 +87,21 @@ export async function getXMe(accessToken: string) {
   return result.data
 }
 
-async function tokenRequest(
+/**
+ * refresh_token と client_id/client_secret から access_token を再取得する。
+ * 手動入力経路で refresh_token を持っているユーザー向け（X_CLIENT_ID/SECRET の env が必要）。
+ */
+export async function refreshXToken(
   clientId: string,
   clientSecret: string,
-  params: URLSearchParams
+  refreshToken: string
 ): Promise<XTokens> {
+  const params = new URLSearchParams({
+    grant_type: 'refresh_token',
+    refresh_token: refreshToken,
+    client_id: clientId,
+  })
+
   const res = await fetch(X_TOKEN_URL, {
     method: 'POST',
     headers: {
@@ -106,8 +114,8 @@ async function tokenRequest(
 
   if (!res.ok) {
     const errText = await res.text().catch(() => '')
-    console.error('[X token]', res.status, errText)
-    throw new XAuthError(`X token request failed (HTTP ${res.status})`)
+    console.error('[X token refresh]', res.status, errText)
+    throw new XAuthError(`X token refresh failed (HTTP ${res.status})`)
   }
 
   const data = await res.json() as {
@@ -121,61 +129,4 @@ async function tokenRequest(
     refreshToken: data.refresh_token,
     expiresAt: Date.now() + data.expires_in * 1000,
   }
-}
-
-export async function refreshXToken(
-  clientId: string,
-  clientSecret: string,
-  refreshToken: string
-): Promise<XTokens> {
-  return tokenRequest(clientId, clientSecret, new URLSearchParams({
-    grant_type: 'refresh_token',
-    refresh_token: refreshToken,
-    client_id: clientId,
-  }))
-}
-
-export async function exchangeXCode(params: {
-  code: string
-  codeVerifier: string
-  redirectUri: string
-  clientId: string
-  clientSecret: string
-}): Promise<XTokens> {
-  return tokenRequest(params.clientId, params.clientSecret, new URLSearchParams({
-    grant_type: 'authorization_code',
-    code: params.code,
-    redirect_uri: params.redirectUri,
-    code_verifier: params.codeVerifier,
-    client_id: params.clientId,
-  }))
-}
-
-export function buildXAuthUrl(params: {
-  clientId: string
-  redirectUri: string
-  state: string
-  codeChallenge: string
-}): string {
-  const url = new URL(`${X_AUTH_BASE}/authorize`)
-  url.searchParams.set('response_type', 'code')
-  url.searchParams.set('client_id', params.clientId)
-  url.searchParams.set('redirect_uri', params.redirectUri)
-  url.searchParams.set('scope', X_SCOPES)
-  url.searchParams.set('state', params.state)
-  url.searchParams.set('code_challenge', params.codeChallenge)
-  url.searchParams.set('code_challenge_method', 'S256')
-  return url.toString()
-}
-
-export function generateCodeVerifier(): string {
-  const array = new Uint8Array(32)
-  crypto.getRandomValues(array)
-  return Buffer.from(array).toString('base64url')
-}
-
-export async function generateCodeChallenge(verifier: string): Promise<string> {
-  const data = new TextEncoder().encode(verifier)
-  const digest = await crypto.subtle.digest('SHA-256', data)
-  return Buffer.from(digest).toString('base64url')
 }
