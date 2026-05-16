@@ -1,7 +1,6 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { useSearchParams } from 'next/navigation'
 import { Plus, User, X, AlertCircle, Eye, EyeOff, BookOpen, MessageCircle, Camera, ExternalLink } from 'lucide-react'
 import { Card } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
@@ -171,15 +170,17 @@ export default function AccountsPage() {
   })
   const [oauthLoading, setOauthLoading] = useState(false)
 
-  const searchParams = useSearchParams()
-
   useEffect(() => {
     fetch('/api/accounts').then(r => r.json()).then(setAccounts).catch(() => {})
   }, [])
 
   useEffect(() => {
-    const err = searchParams.get('error')
-    const ok = searchParams.get('connected')
+    // URL クエリパラメータから OAuth 結果を読む
+    // useSearchParams() は Suspense 境界が要るためここでは window.location を使う
+    if (typeof window === 'undefined') return
+    const params = new URLSearchParams(window.location.search)
+    const err = params.get('error')
+    const ok = params.get('connected')
     if (ok === 'x') {
       setSuccessMsg('X アカウントを連携しました')
       setTimeout(() => setSuccessMsg(''), 4000)
@@ -188,7 +189,7 @@ export default function AccountsPage() {
       setShowForm(true)
       setPlatform('x')
     }
-  }, [searchParams])
+  }, [])
 
   async function handleXOAuth() {
     setFormError('')
