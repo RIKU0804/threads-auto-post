@@ -1,22 +1,28 @@
 import 'server-only'
 import { createServerSupabaseClient } from '@/lib/supabase'
+import type { PromptKind } from './prompt-presets'
 
-export type PromptKind = 'text' | 'image' | 'themes'
+export type { PromptKind }
 
 /**
- * 認証済みユーザーがプロンプト設定 (追加指示) を保存していれば取得する。
- * 未設定 / 未認証なら null。
+ * 指定アカウントのカスタムプロンプト（追加指示）を取得する。
+ * 未設定 / accountId 無し / 未認証 なら null。
  */
-export async function fetchUserPromptExtra(kind: PromptKind): Promise<string | null> {
+export async function fetchAccountPromptExtra(
+  accountId: string | null | undefined,
+  kind: PromptKind,
+): Promise<string | null> {
+  if (!accountId) return null
   try {
     const supabase = await createServerSupabaseClient()
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return null
 
+    // RLS で他人の account の設定は引けないため、accountId が他人のものなら 0 行
     const { data } = await supabase
-      .from('user_prompt_settings')
+      .from('account_prompt_settings')
       .select('text_extra, image_extra, themes_extra')
-      .eq('user_id', user.id)
+      .eq('account_id', accountId)
       .maybeSingle()
 
     if (!data) return null
@@ -36,11 +42,9 @@ export async function fetchUserPromptExtra(kind: PromptKind): Promise<string | n
 
 /**
  * システムプロンプトに「ユーザー追加指示」を安全な形で連結する。
- * デリミタで囲み、注入対策のラベルを付ける。
  */
 export function appendUserExtra(systemPrompt: string, extra: string | null): string {
   if (!extra) return systemPrompt
-  // ユーザー入力なのでプロンプトインジェクション対策のラベルとデリミタで囲む
   return `${systemPrompt}
 
 【ユーザーが設定した追加指示】

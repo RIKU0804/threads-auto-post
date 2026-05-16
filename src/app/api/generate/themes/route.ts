@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createServerSupabaseClient } from '@/lib/supabase'
-import { fetchUserPromptExtra, appendUserExtra } from '@/lib/ai/prompt-settings'
+import { fetchAccountPromptExtra, appendUserExtra } from '@/lib/ai/prompt-settings'
 import type { Account } from '@/types/database'
 
 const DEMO_ACCOUNT: Pick<Account, 'persona' | 'tone' | 'target_audience' | 'post_topics'> = {
@@ -69,7 +69,7 @@ export async function POST(req: NextRequest) {
 返答形式（他の文章は不要）：
 ["テーマ1", "テーマ2", "テーマ3", "テーマ4", "テーマ5", "テーマ6"]`
 
-    const userExtra = await fetchUserPromptExtra('themes')
+    const userExtra = await fetchAccountPromptExtra(accountId, 'themes')
     const prompt = appendUserExtra(basePrompt, userExtra)
 
     const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {

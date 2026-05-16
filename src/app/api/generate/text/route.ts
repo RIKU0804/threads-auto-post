@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createServerSupabaseClient } from '@/lib/supabase'
 import { generateSNSText } from '@/lib/ai/text'
-import { fetchUserPromptExtra } from '@/lib/ai/prompt-settings'
+import { fetchAccountPromptExtra } from '@/lib/ai/prompt-settings'
 import type { Account } from '@/types/database'
 
 // アカウントなし時のデフォルト設定
@@ -84,7 +84,7 @@ export async function POST(req: NextRequest) {
         .filter(Boolean)
     }
 
-    const userExtra = await fetchUserPromptExtra('text')
+    const userExtra = await fetchAccountPromptExtra(accountId, 'text')
 
     const result = await generateSNSText({
       account,

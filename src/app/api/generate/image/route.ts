@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createServerSupabaseClient } from '@/lib/supabase'
 import { generateDiagramImage } from '@/lib/ai/image'
 import { analyzeImageStructure } from '@/lib/ai/vision'
-import { fetchUserPromptExtra } from '@/lib/ai/prompt-settings'
+import { fetchAccountPromptExtra } from '@/lib/ai/prompt-settings'
 
 const MAX_REF_IMAGE_BYTES = 7 * 1024 * 1024 // base64で約5MB相当
 const ALLOWED_REF_MIME = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif'])
@@ -61,7 +61,8 @@ export async function POST(req: NextRequest) {
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return NextResponse.json({ error: '認証が必要です' }, { status: 401 })
 
-    const { prompt, postContent, style, referenceImageBase64, referenceImageMimeType } = await req.json() as {
+    const { accountId, prompt, postContent, style, referenceImageBase64, referenceImageMimeType } = await req.json() as {
+      accountId?: string
       prompt?: string
       postContent?: string
       style?: 'diagram' | 'infographic' | 'minimal'
@@ -95,7 +96,7 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    const userExtra = await fetchUserPromptExtra('image')
+    const userExtra = await fetchAccountPromptExtra(accountId, 'image')
     if (userExtra) {
       resolvedPrompt = `${resolvedPrompt}
 

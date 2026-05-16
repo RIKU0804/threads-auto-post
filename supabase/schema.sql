@@ -72,10 +72,10 @@ CREATE TABLE post_themes (
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- ユーザーごとのカスタムプロンプト設定
+-- アカウントごとのカスタムプロンプト設定
 -- 既存のシステムプロンプトに「追加指示」として混ぜる
-CREATE TABLE user_prompt_settings (
-  user_id UUID PRIMARY KEY REFERENCES auth.users ON DELETE CASCADE,
+CREATE TABLE account_prompt_settings (
+  account_id UUID PRIMARY KEY REFERENCES accounts(id) ON DELETE CASCADE,
   text_extra TEXT,
   image_extra TEXT,
   themes_extra TEXT,
@@ -113,12 +113,16 @@ ALTER TABLE posts ENABLE ROW LEVEL SECURITY;
 ALTER TABLE post_themes ENABLE ROW LEVEL SECURITY;
 ALTER TABLE post_logs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE reference_accounts ENABLE ROW LEVEL SECURITY;
-ALTER TABLE user_prompt_settings ENABLE ROW LEVEL SECURITY;
+ALTER TABLE account_prompt_settings ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY "user_prompt_settings: own data only"
-  ON user_prompt_settings FOR ALL
-  USING (user_id = auth.uid())
-  WITH CHECK (user_id = auth.uid());
+CREATE POLICY "account_prompt_settings: own accounts only"
+  ON account_prompt_settings FOR ALL
+  USING (
+    account_id IN (SELECT id FROM accounts WHERE user_id = auth.uid())
+  )
+  WITH CHECK (
+    account_id IN (SELECT id FROM accounts WHERE user_id = auth.uid())
+  );
 
 -- reference_accounts: 自分のもののみ
 CREATE POLICY "reference_accounts: own data only"
