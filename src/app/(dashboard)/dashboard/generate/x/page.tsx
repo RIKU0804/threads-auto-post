@@ -177,9 +177,16 @@ export default function XGeneratePage() {
       })
       const post = await res.json() as Post & { error?: string }
       if (post.error) throw new Error(post.error)
-      setSavedPost(post)
       if (publish && selectedAccount) {
-        await fetch(`/api/posts/${post.id}/publish`, { method: 'POST' })
+        const pubRes = await fetch(`/api/posts/${post.id}/publish`, { method: 'POST' })
+        if (!pubRes.ok) {
+          const pd = await pubRes.json().catch(() => ({})) as { error?: string }
+          setSavedPost(post)
+          throw new Error(pd.error ?? '投稿に失敗しました（下書きは保存済み）')
+        }
+        setSavedPost({ ...post, status: 'posted' })
+      } else {
+        setSavedPost(post)
       }
       setStep('done')
     } catch (e) {

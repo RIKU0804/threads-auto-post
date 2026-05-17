@@ -7,6 +7,8 @@ import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
 import { SelectNative } from '@/components/ui/Select'
 import { cx } from '@/lib/utils'
+import { useToast } from '@/components/ui/Toast'
+import { useConfirm } from '@/components/ui/ConfirmDialog'
 import type { Account, ReferenceAccount } from '@/types/database'
 
 type SupportedPlatform = 'threads' | 'instagram' | 'x'
@@ -74,13 +76,18 @@ const SETUP_GUIDES: Record<SupportedPlatform, SetupGuide> = {
   },
 }
 
-function SetupGuide({ platform }: { platform: SupportedPlatform }) {
+function SetupGuide({ platform, defaultOpen }: { platform: SupportedPlatform; defaultOpen: boolean }) {
   const g = SETUP_GUIDES[platform]
+  const [open, setOpen] = useState(defaultOpen)
   return (
-    <details className="rounded-md border border-[#cfe6ec] bg-[#F2FBFC] px-3 py-2.5 [&_summary]:list-none">
+    <details
+      open={open}
+      onToggle={e => setOpen((e.target as HTMLDetailsElement).open)}
+      className="rounded-md border border-[#cfe6ec] bg-[#F2FBFC] px-3 py-2.5 [&_summary]:list-none"
+    >
       <summary className="flex cursor-pointer items-center gap-1.5 text-xs font-semibold text-[#006F83]">
         <HelpCircle className="h-3.5 w-3.5" />
-        トークンの取得手順を見る（クリックで開閉）
+        トークンの取得手順{open ? 'を隠す' : 'を見る'}（クリックで開閉）
       </summary>
       <div className="mt-2.5 space-y-2.5">
         <p className="text-[11px] leading-relaxed text-gray-600">{g.intro}</p>
@@ -138,6 +145,8 @@ function FieldLabel({ children, optional }: { children: React.ReactNode; optiona
 // 参考アカウント管理
 // ────────────────────────────────────────────
 function ReferenceAccountsSection() {
+  const toast = useToast()
+  const confirm = useConfirm()
   const [refs, setRefs] = useState<ReferenceAccount[]>([])
   const [showAdd, setShowAdd] = useState(false)
   const [name, setName] = useState('')
@@ -169,9 +178,16 @@ function ReferenceAccountsSection() {
   }
 
   async function handleDelete(id: string) {
+    const ok = await confirm({
+      title: '参考アカウントを削除',
+      message: 'この参考アカウントを削除しますか？',
+      confirmLabel: '削除する',
+      destructive: true,
+    })
+    if (!ok) return
     const res = await fetch(`/api/reference-accounts/${id}`, { method: 'DELETE' })
     if (!res.ok) {
-      alert('削除に失敗しました')
+      toast.error('削除に失敗しました')
       return
     }
     setRefs(prev => prev.filter(r => r.id !== id))
@@ -508,7 +524,7 @@ export default function AccountsPage() {
                       : 'X API 設定'}
                   </p>
 
-                  <SetupGuide platform={platform} />
+                  <SetupGuide key={platform} platform={platform} defaultOpen={!form.accessToken.trim()} />
 
                   <div>
                     <FieldLabel>Access Token</FieldLabel>

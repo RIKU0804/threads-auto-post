@@ -85,7 +85,7 @@ export async function PUT(req: NextRequest) {
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return NextResponse.json({ error: '認証が必要です' }, { status: 401 })
 
-    const rl = await checkRateLimit(user.id, 'api_keys', RATE_LIMITS.apiKeys.limit, RATE_LIMITS.apiKeys.windowSeconds)
+    const rl = await checkRateLimit(user.id, 'api_keys', RATE_LIMITS.apiKeys.limit, RATE_LIMITS.apiKeys.windowSeconds, RATE_LIMITS.apiKeys.failMode)
     if (!rl.ok) {
       return NextResponse.json(
         { error: '更新が多すぎます。しばらくしてからお試しください。', code: 'RATE_LIMITED' },

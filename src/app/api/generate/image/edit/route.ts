@@ -48,7 +48,7 @@ export async function POST(req: NextRequest) {
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return NextResponse.json({ error: '認証が必要です' }, { status: 401 })
 
-    const rl = await checkRateLimit(user.id, 'generate', RATE_LIMITS.generate.limit, RATE_LIMITS.generate.windowSeconds)
+    const rl = await checkRateLimit(user.id, 'generate', RATE_LIMITS.generate.limit, RATE_LIMITS.generate.windowSeconds, RATE_LIMITS.generate.failMode)
     if (!rl.ok) {
       return NextResponse.json(
         { error: '生成リクエストが多すぎます。しばらくしてからお試しください。', code: 'RATE_LIMITED' },
@@ -87,7 +87,7 @@ export async function POST(req: NextRequest) {
     const imgBuffer = Buffer.from(arrayBuffer)
 
     const openaiKey = await requireApiKey('openai')
-    const client = new OpenAI({ apiKey: openaiKey })
+    const client = new OpenAI({ apiKey: openaiKey, timeout: 120_000, maxRetries: 0 })
 
     let response: { data?: Array<{ b64_json?: string }> } | null = null
     for (let attempt = 0; attempt < 2; attempt++) {

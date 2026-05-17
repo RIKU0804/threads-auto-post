@@ -10,13 +10,17 @@ export interface RateLimitResult {
 /**
  * 固定ウィンドウ方式のレート制限。
  * Supabase の increment_rate_limit() RPC でアトミックにカウント。
- * RPC 失敗時は「通す」(fail-open) — 監視外の理由でユーザーをブロックしないため。
+ *
+ * failMode:
+ *  - 'open'  : RPC 失敗時に通す（可用性優先。低リスクな bucket 用）
+ *  - 'closed': RPC 失敗時にブロック（コスト保護が主目的の bucket 用）
  */
 export async function checkRateLimit(
   userId: string,
   bucket: string,
   limit: number,
   windowSeconds: number,
+  failMode: 'open' | 'closed' = 'open',
 ): Promise<RateLimitResult> {
   try {
     const admin = createAdminClient()
@@ -26,19 +30,22 @@ export async function checkRateLimit(
       p_window_seconds: windowSeconds,
     })
     if (error) {
-      console.error('[rate-limit] rpc error', error.message)
-      return { ok: true, count: 0, limit }
+      console.error(JSON.stringify({ evt: 'rate_limit_rpc_error', bucket, msg: error.message }))
+      return { ok: failMode === 'open', count: 0, limit }
     }
     const count = typeof data === 'number' ? data : 0
     return { ok: count <= limit, count, limit }
   } catch (e) {
-    console.error('[rate-limit]', e instanceof Error ? e.message : 'unknown')
-    return { ok: true, count: 0, limit }
+    console.error(JSON.stringify({
+      evt: 'rate_limit_exception', bucket,
+      msg: e instanceof Error ? e.message : 'unknown',
+    }))
+    return { ok: failMode === 'open', count: 0, limit }
   }
 }
 
-/** プリセット */
+/** プリセット（generate はコスト保護のため fail-closed） */
 export const RATE_LIMITS = {
-  generate: { limit: 60, windowSeconds: 3600 },   // AI 生成: 60 回 / 時
-  apiKeys:  { limit: 20, windowSeconds: 3600 },    // APIキー更新: 20 回 / 時
-} as const
+  generate: { limit: 60, windowSeconds: 3600, failMode: 'closed' as const },
+  apiKeys:  { limit: 20, windowSeconds: 3600, failMode: 'open' as const },
+}

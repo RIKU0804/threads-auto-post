@@ -9,6 +9,8 @@ import {
 import { Card } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
 import { cx } from '@/lib/utils'
+import { useToast } from '@/components/ui/Toast'
+import { useConfirm } from '@/components/ui/ConfirmDialog'
 import type { Post } from '@/types/database'
 
 const STATUS_CONFIG: Record<string, { label: string; cls: string }> = {
@@ -160,6 +162,8 @@ function DraftCard({
 
 export default function DraftsPage() {
   const router = useRouter()
+  const toast = useToast()
+  const confirm = useConfirm()
   const [posts, setPosts] = useState<Post[]>([])
   const [loading, setLoading] = useState(true)
   const [publishing, setPublishing] = useState<string | null>(null)
@@ -182,9 +186,10 @@ export default function DraftsPage() {
       const res = await fetch(`/api/posts/${postId}/publish`, { method: 'POST' })
       if (!res.ok) {
         const data = await res.json().catch(() => ({})) as { error?: string }
-        alert(data.error ?? '投稿に失敗しました')
+        toast.error(data.error ?? '投稿に失敗しました')
         return
       }
+      toast.success('投稿しました')
       await load()
     } finally {
       setPublishing(null)
@@ -192,12 +197,18 @@ export default function DraftsPage() {
   }
 
   async function handleDelete(postId: string) {
-    if (!confirm('この投稿を削除しますか？')) return
+    const ok = await confirm({
+      title: '投稿を削除',
+      message: 'この投稿を削除しますか？この操作は取り消せません。',
+      confirmLabel: '削除する',
+      destructive: true,
+    })
+    if (!ok) return
     setDeleting(postId)
     try {
       const res = await fetch(`/api/posts/${postId}`, { method: 'DELETE' })
       if (!res.ok) {
-        alert('削除に失敗しました')
+        toast.error('削除に失敗しました')
         return
       }
       setPosts(prev => prev.filter(p => p.id !== postId))

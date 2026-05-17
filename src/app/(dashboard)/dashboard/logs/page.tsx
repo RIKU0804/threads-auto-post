@@ -4,6 +4,8 @@ import { useEffect, useState } from 'react'
 import { CheckCircle, AlertCircle, PenLine, Send, FileText, ChevronDown, ChevronUp, ImageIcon, User, RefreshCw, Loader2 } from 'lucide-react'
 import { Card } from '@/components/ui/Card'
 import { cx } from '@/lib/utils'
+import { useToast } from '@/components/ui/Toast'
+import { useConfirm } from '@/components/ui/ConfirmDialog'
 import type { PostStatus, PostWithAccount } from '@/types/database'
 
 const STATUS_CONFIG: Record<PostStatus, { label: string; cls: string; Icon: typeof PenLine }> = {
@@ -125,6 +127,8 @@ function PostCard({ post, onPublish }: { post: PostWithAccount; onPublish: (id: 
 }
 
 export default function LogsPage() {
+  const toast = useToast()
+  const confirm = useConfirm()
   const [posts, setPosts] = useState<PostWithAccount[]>([])
   const [loading, setLoading] = useState(true)
   const [filter, setFilter] = useState<'all' | 'draft' | 'posted' | 'failed'>('all')
@@ -140,12 +144,19 @@ export default function LogsPage() {
   useEffect(() => { load() }, [])
 
   async function handlePublish(postId: string) {
-    if (!confirm('今すぐThreadsに投稿しますか？')) return
+    const ok = await confirm({
+      title: '今すぐ投稿',
+      message: 'この投稿を今すぐ公開しますか？',
+      confirmLabel: '投稿する',
+    })
+    if (!ok) return
     const res = await fetch(`/api/posts/${postId}/publish`, { method: 'POST' })
     if (res.ok) {
       setPosts(prev => prev.map(p => p.id === postId ? { ...p, status: 'posted' as const } : p))
+      toast.success('投稿しました')
     } else {
-      alert('投稿に失敗しました')
+      const data = await res.json().catch(() => ({})) as { error?: string }
+      toast.error(data.error ?? '投稿に失敗しました')
     }
   }
 

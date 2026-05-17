@@ -15,20 +15,32 @@ import crypto from 'crypto'
 
 const PREFIX = 'v1:'
 
-function getKey(): Buffer {
-  const raw = process.env.ENCRYPTION_KEY
-  if (!raw) {
-    throw new Error('ENCRYPTION_KEY is not configured')
-  }
-  // hex 64 文字 or base64 を許容
+function parseKey(raw: string): Buffer {
+  // hex 64 文字 or base64 を許容（base64 は厳密判定: ラウンドトリップ一致 + 32 バイト）
   if (/^[0-9a-fA-F]{64}$/.test(raw)) {
     return Buffer.from(raw, 'hex')
   }
   const buf = Buffer.from(raw, 'base64')
-  if (buf.length !== 32) {
-    throw new Error('ENCRYPTION_KEY must decode to 32 bytes')
+  if (buf.length !== 32 || buf.toString('base64').replace(/=+$/, '') !== raw.replace(/=+$/, '')) {
+    throw new Error('ENCRYPTION_KEY must be 64-hex or base64 of exactly 32 bytes')
   }
   return buf
+}
+
+function getKey(): Buffer {
+  const raw = process.env.ENCRYPTION_KEY
+  if (!raw) throw new Error('ENCRYPTION_KEY is not configured')
+  return parseKey(raw)
+}
+
+/** 復号で試す鍵の一覧（現行 + ローテーション用の旧鍵）。 */
+function getDecryptKeys(): Buffer[] {
+  const keys: Buffer[] = []
+  const cur = process.env.ENCRYPTION_KEY
+  const old = process.env.ENCRYPTION_KEY_OLD
+  if (cur) { try { keys.push(parseKey(cur)) } catch {} }
+  if (old) { try { keys.push(parseKey(old)) } catch {} }
+  return keys
 }
 
 export function isEncryptionAvailable(): boolean {
@@ -54,22 +66,26 @@ export function decryptSecret(stored: string | null | undefined): string | null 
     // 移行前の平文データ
     return stored
   }
-  try {
-    const key = getKey()
-    const [ivB64, tagB64, ctB64] = stored.slice(PREFIX.length).split(':')
-    if (!ivB64 || !tagB64 || !ctB64) return null
-    const decipher = crypto.createDecipheriv(
-      'aes-256-gcm',
-      key,
-      Buffer.from(ivB64, 'base64'),
-    )
-    decipher.setAuthTag(Buffer.from(tagB64, 'base64'))
-    const pt = Buffer.concat([
-      decipher.update(Buffer.from(ctB64, 'base64')),
-      decipher.final(),
-    ])
-    return pt.toString('utf8')
-  } catch {
-    return null
+  const [ivB64, tagB64, ctB64] = stored.slice(PREFIX.length).split(':')
+  if (!ivB64 || !tagB64 || !ctB64) return null
+
+  // 現行鍵 → 旧鍵 の順で復号を試す（鍵ローテーション対応）
+  for (const key of getDecryptKeys()) {
+    try {
+      const decipher = crypto.createDecipheriv(
+        'aes-256-gcm',
+        key,
+        Buffer.from(ivB64, 'base64'),
+      )
+      decipher.setAuthTag(Buffer.from(tagB64, 'base64'))
+      const pt = Buffer.concat([
+        decipher.update(Buffer.from(ctB64, 'base64')),
+        decipher.final(),
+      ])
+      return pt.toString('utf8')
+    } catch {
+      // 次の鍵で再試行
+    }
   }
+  return null
 }

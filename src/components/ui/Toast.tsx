@@ -44,7 +44,8 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
 
   const show = useCallback<ToastContextValue['show']>(({ kind, message, action, durationMs }) => {
     const id = nextId++
-    setItems(prev => [...prev, { id, kind, message, action }])
+    // 同時表示は最大3件（古いものから破棄）
+    setItems(prev => [...prev, { id, kind, message, action }].slice(-3))
     const ttl = durationMs ?? (kind === 'error' ? 7000 : 3500)
     setTimeout(() => remove(id), ttl)
   }, [remove])
@@ -64,7 +65,7 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
   return (
     <ToastContext.Provider value={{ show, success, error }}>
       {children}
-      <div className="pointer-events-none fixed inset-x-0 bottom-20 z-[100] flex flex-col items-center gap-2 px-4 md:bottom-6">
+      <div className="pointer-events-none fixed inset-x-0 bottom-[4.5rem] z-[100] flex flex-col items-center gap-2 px-4 md:bottom-6">
         {items.map(t => {
           const Icon = t.kind === 'success' ? CheckCircle : AlertCircle
           return (

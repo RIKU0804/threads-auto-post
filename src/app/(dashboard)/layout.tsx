@@ -18,6 +18,7 @@ import {
 import { cx } from '@/lib/utils'
 import { createClient } from '@/lib/supabase-browser'
 import { ToastProvider } from '@/components/ui/Toast'
+import { ConfirmProvider } from '@/components/ui/ConfirmDialog'
 
 const navItems = [
   { href: '/dashboard', label: 'ホーム', icon: LayoutDashboard },
@@ -54,6 +55,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
   return (
     <ToastProvider>
+    <ConfirmProvider>
     <div className="flex h-screen overflow-hidden bg-[#F8FAFC]">
       {/* Sidebar — desktop only */}
       <nav className="hidden md:flex w-60 shrink-0 flex-col bg-slate-800">
@@ -195,6 +197,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         </button>
       </nav>
     </div>
+    </ConfirmProvider>
     </ToastProvider>
   )
 }

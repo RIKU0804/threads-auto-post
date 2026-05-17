@@ -231,8 +231,9 @@ ${recentSummaries.length > 0 ? '\n※ 過去投稿と切り口・主張・構成
   "summary": "この投稿の内容を30〜50字で要約（次回の被り防止用）"
 }`
 
-  // 出力サイズの目安: 日本語1字 ≈ 1.5〜2 token、summary 50字 + JSON 装飾を含めて余裕を持たせる
-  const maxOutputTokens = Math.ceil(effectiveMaxLength * 2.5) + 200
+  // 出力サイズの目安: 日本語は1字で複数トークンになりやすいので係数 3.5、
+  // summary + JSON 装飾分も加算。上限 8000 にクランプ（Instagram 長文での途中破断防止）
+  const maxOutputTokens = Math.min(Math.ceil(effectiveMaxLength * 3.5) + 400, 8000)
 
   const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
     method: 'POST',

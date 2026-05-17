@@ -34,6 +34,18 @@ export async function fetchUserApiKeys(): Promise<FetchedKeys> {
       .maybeSingle()
 
     if (!data) return empty
+
+    // 移行前の平文レコード（v1: プレフィックス無し）を検知して監視ログを出す
+    const isPlaintext = (v: string | null) =>
+      typeof v === 'string' && v.length > 0 && !v.startsWith('v1:')
+    if (isPlaintext(data.openrouter_key) || isPlaintext(data.openai_key)) {
+      console.warn(JSON.stringify({
+        evt: 'api_key_plaintext_in_use',
+        user_id: user.id,
+        hint: 'ENCRYPTION_KEY 設定後に「設定」ページで再保存すると暗号化されます',
+      }))
+    }
+
     return {
       openrouter: decryptSecret(data.openrouter_key)?.trim() || null,
       openai: decryptSecret(data.openai_key)?.trim() || null,
