@@ -2,7 +2,7 @@ import type { Metadata } from 'next'
 import './globals.css'
 
 export const metadata: Metadata = {
-  title: 'AutoPost — SNS自動投稿',
+  title: 'SNS AutoPost — マルチSNS自動投稿',
   description: 'SNS自動投稿管理システム（Threads / Instagram / X 対応）',
 }
 

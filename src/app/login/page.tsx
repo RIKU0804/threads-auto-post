@@ -39,8 +39,8 @@ export default function LoginPage() {
           <Zap className="h-6 w-6 text-white" strokeWidth={2.5} />
         </div>
         <div className="text-center">
-          <h1 className="text-2xl font-bold text-gray-900">AutoPost</h1>
-          <p className="text-sm text-gray-500">SNS 自動投稿</p>
+          <h1 className="text-2xl font-bold text-gray-900">SNS AutoPost</h1>
+          <p className="text-sm text-gray-500">マルチSNS自動投稿</p>
         </div>
       </div>
 

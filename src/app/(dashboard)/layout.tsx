@@ -63,8 +63,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             <Zap className="h-4 w-4 text-white" strokeWidth={2.5} />
           </div>
           <div>
-            <p className="text-sm font-bold text-white leading-tight">AutoPost</p>
-            <p className="text-[11px] text-slate-400 leading-tight">SNS 自動投稿</p>
+            <p className="text-sm font-bold text-white leading-tight">SNS AutoPost</p>
+            <p className="text-[11px] text-slate-400 leading-tight">マルチSNS自動投稿</p>
           </div>
         </div>
 
@@ -113,7 +113,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             <div className="flex h-7 w-7 items-center justify-center rounded-md bg-[#00A3BF]">
               <Zap className="h-3.5 w-3.5 text-white" strokeWidth={2.5} />
             </div>
-            <p className="text-sm font-bold text-slate-800">AutoPost</p>
+            <p className="text-sm font-bold text-slate-800">SNS AutoPost</p>
           </div>
           <button
             onClick={handleLogout}
