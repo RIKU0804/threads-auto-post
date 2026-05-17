@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { Plus, User, X, AlertCircle, Eye, EyeOff, BookOpen, MessageCircle, Camera } from 'lucide-react'
+import { Plus, User, X, AlertCircle, Eye, EyeOff, BookOpen, MessageCircle, Camera, ExternalLink, HelpCircle } from 'lucide-react'
 import { Card } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
@@ -24,6 +24,94 @@ const PLATFORM_TABS: { value: SupportedPlatform; label: string; icon: React.Comp
   { value: 'instagram', label: 'Instagram', icon: Camera },
   { value: 'x',         label: 'X (Twitter)', icon: XIconBrand },
 ]
+
+// アカウント追加の手順ガイド（実画面の動画は用意できないため、各ステップで「何を押し何を貼るか」を明示）
+interface GuideLink { label: string; href: string }
+interface SetupGuide { intro: string; links: GuideLink[]; steps: string[] }
+
+const SETUP_GUIDES: Record<SupportedPlatform, SetupGuide> = {
+  threads: {
+    intro: 'Meta アプリは1個だけ作れば全 Threads アカウントで使い回せます。アカウントを増やすときは「そのアカウントで発行したトークンを貼る」だけです。',
+    links: [
+      { label: 'Meta for Developers を開く', href: 'https://developers.facebook.com/apps' },
+    ],
+    steps: [
+      '上のリンクで「アプリを作成」→ ユースケースは「その他」→ タイプ「ビジネス」で作成（初回のみ）',
+      'アプリのダッシュボード →「製品を追加」から “Threads API” を選んで「設定」',
+      'Threads API の画面で、投稿したい Threads アカウントで認可してアクセストークンを生成',
+      '長期トークン（60日）に変換しておくと運用が楽（任意）',
+      '生成された access token をコピー',
+      '↓ の「Access Token」に貼り付け。「Threads User ID」は空欄でOK（自動取得します）',
+    ],
+  },
+  instagram: {
+    intro: 'Instagram は「プロアカウント」を Facebook ページに連携している必要があります。Meta アプリは1個で使い回せます。',
+    links: [
+      { label: 'Meta for Developers を開く', href: 'https://developers.facebook.com/apps' },
+      { label: 'Graph API Explorer を開く', href: 'https://developers.facebook.com/tools/explorer' },
+    ],
+    steps: [
+      'アプリを作成（タイプ「ビジネス」）し、製品に “Instagram Graph API” と “Facebook ログイン” を追加（初回のみ）',
+      '投稿先 Instagram を「プロアカウント」にし、Facebook ページに連携',
+      'Graph API Explorer を開き、対象アプリと該当 Facebook ページを選択',
+      '権限を付与: instagram_basic / instagram_content_publish / pages_show_list / pages_read_engagement',
+      '「Generate Access Token」を押し、表示された Page アクセストークンをコピー',
+      '↓ の「Access Token」に貼り付け。「Business Account ID」は空欄でOK（自動取得します）',
+    ],
+  },
+  x: {
+    intro: 'X は Meta とは無関係です。X 専用の開発者ポータルで設定します（このアプリの「かんたん連携」は廃止したので手動でトークンを貼ります）。',
+    links: [
+      { label: 'X Developer Portal を開く', href: 'https://developer.x.com/en/portal/dashboard' },
+    ],
+    steps: [
+      'Developer Portal で Project と App を作成',
+      'App の「User authentication settings」で OAuth 2.0 を有効化（Type: Web App、scope: tweet.read tweet.write users.read offline.access）',
+      '「Keys and tokens」タブ → OAuth 2.0 でユーザーの access token を発行',
+      '発行された access token をコピー',
+      '↓ の「Access Token」に貼り付け',
+    ],
+  },
+}
+
+function SetupGuide({ platform }: { platform: SupportedPlatform }) {
+  const g = SETUP_GUIDES[platform]
+  return (
+    <details className="rounded-md border border-[#cfe6ec] bg-[#F2FBFC] px-3 py-2.5 [&_summary]:list-none">
+      <summary className="flex cursor-pointer items-center gap-1.5 text-xs font-semibold text-[#006F83]">
+        <HelpCircle className="h-3.5 w-3.5" />
+        トークンの取得手順を見る（クリックで開閉）
+      </summary>
+      <div className="mt-2.5 space-y-2.5">
+        <p className="text-[11px] leading-relaxed text-gray-600">{g.intro}</p>
+        <div className="flex flex-wrap gap-1.5">
+          {g.links.map(l => (
+            <a
+              key={l.href}
+              href={l.href}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1 rounded-md bg-white px-2.5 py-1 text-[11px] font-medium text-[#006F83] ring-1 ring-[#cfe6ec] transition hover:bg-[#E9F7F9]"
+            >
+              {l.label}
+              <ExternalLink className="h-3 w-3" />
+            </a>
+          ))}
+        </div>
+        <ol className="space-y-1.5">
+          {g.steps.map((s, i) => (
+            <li key={i} className="flex gap-2 text-[11px] leading-relaxed text-gray-700">
+              <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-[#00A3BF] text-[9px] font-bold text-white">
+                {i + 1}
+              </span>
+              <span>{s}</span>
+            </li>
+          ))}
+        </ol>
+      </div>
+    </details>
+  )
+}
 
 const PERSONAS = [
   { value: '転職ノウハウ発信者', label: '転職ノウハウ系' },
@@ -419,6 +507,8 @@ export default function AccountsPage() {
                       : platform === 'instagram' ? 'Instagram API 設定'
                       : 'X API 設定'}
                   </p>
+
+                  <SetupGuide platform={platform} />
 
                   <div>
                     <FieldLabel>Access Token</FieldLabel>
