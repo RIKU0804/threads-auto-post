@@ -47,7 +47,17 @@ interface PromptResponse {
 
 type PromptPanelStatus = 'idle' | 'loading' | 'loaded' | 'error'
 
-function PromptPanelBody({ status, text }: { status: PromptPanelStatus; text: string }) {
+function PromptPanelBody({
+  status, value, onChange, onSave, onReset, saving, canEdit,
+}: {
+  status: PromptPanelStatus
+  value: string
+  onChange: (v: string) => void
+  onSave: () => void
+  onReset: () => void
+  saving: boolean
+  canEdit: boolean
+}) {
   return (
     <>
       <div className="flex items-center gap-2">
@@ -55,32 +65,60 @@ function PromptPanelBody({ status, text }: { status: PromptPanelStatus; text: st
           <FileText className="h-3.5 w-3.5 text-[#00A3BF]" />
         </div>
         <p className="text-sm font-semibold" style={{ color: '#061b31' }}>
-          このアカウントで使われるプロンプト
+          このアカウントのプロンプト
         </p>
       </div>
       <p className="mt-1.5 text-[11px] leading-relaxed text-gray-500">
-        <span className="font-mono">{'{波括弧}'}</span> の部分は生成時に実際の値へ置換されます。編集は
-        <Link href="/dashboard/prompts" className="mx-0.5 font-medium text-[#006F83] underline hover:text-[#005A6B]">
-          『プロンプト』ページ
-        </Link>
-        から。
+        <span className="font-mono">{'{波括弧}'}</span> は生成時に実際の値へ置換されます。ここで直接編集して保存できます。
       </p>
-      <div className="mt-3 max-h-[60vh] overflow-auto rounded-md border border-[#e5edf5] bg-[#F8FAFC] p-3 lg:max-h-[calc(100vh-13rem)]">
+      <div className="mt-3">
         {status === 'idle' && (
-          <p className="text-[11px] leading-relaxed text-gray-400">
-            アカウントを選択すると、そのアカウントで使われるプロンプトが表示されます
+          <p className="rounded-md border border-[#e5edf5] bg-[#F8FAFC] p-3 text-[11px] leading-relaxed text-gray-400">
+            アカウントを選択すると、そのアカウントのプロンプトを表示・編集できます
           </p>
         )}
         {status === 'loading' && (
-          <p className="text-[11px] leading-relaxed text-gray-400">読み込み中...</p>
+          <p className="rounded-md border border-[#e5edf5] bg-[#F8FAFC] p-3 text-[11px] text-gray-400">読み込み中...</p>
         )}
         {status === 'error' && (
-          <p className="text-[11px] leading-relaxed text-red-500">プロンプトの取得に失敗しました</p>
+          <p className="rounded-md border border-red-200 bg-red-50 p-3 text-[11px] text-red-500">プロンプトの取得に失敗しました</p>
         )}
         {status === 'loaded' && (
-          <pre className="whitespace-pre-wrap break-words font-mono text-[11px] leading-relaxed text-gray-700">
-            {text}
-          </pre>
+          <>
+            <Textarea
+              value={value}
+              onChange={e => onChange(e.target.value)}
+              disabled={!canEdit || saving}
+              rows={16}
+              aria-label="このアカウントのプロンプト"
+              className="font-mono text-[11px] leading-relaxed"
+            />
+            <div className="mt-2 flex items-center gap-3">
+              <Button
+                onClick={onSave}
+                disabled={!canEdit || saving}
+                isLoading={saving}
+                loadingText="保存中..."
+                className="gap-1.5 py-1.5 text-xs"
+              >
+                <Save className="h-3.5 w-3.5" />
+                保存
+              </Button>
+              <button
+                type="button"
+                onClick={onReset}
+                disabled={!canEdit || saving}
+                className="text-[11px] text-gray-500 transition-colors hover:text-gray-700 disabled:opacity-40"
+              >
+                デフォルトに戻す
+              </button>
+            </div>
+            {!canEdit && (
+              <p className="mt-1.5 text-[10px] text-gray-400">
+                デモモードでは編集できません。アカウントを選択してください。
+              </p>
+            )}
+          </>
         )}
       </div>
     </>
@@ -110,7 +148,9 @@ export default function ThreadsGeneratePage() {
   const [referenceImage, setReferenceImage] = useState<{ base64: string; mimeType: string } | null>(null)
 
   const [promptText, setPromptText] = useState('')
+  const [promptDefault, setPromptDefault] = useState('')
   const [promptStatus, setPromptStatus] = useState<PromptPanelStatus>('idle')
+  const [promptSaving, setPromptSaving] = useState(false)
 
   const { themeSuggestions, setThemeSuggestions, suggestLoading, suggestThemes } = useThemeSuggestions(selectedAccount)
 
@@ -118,6 +158,7 @@ export default function ThreadsGeneratePage() {
     if (!selectedAccount) {
       setPromptStatus('idle')
       setPromptText('')
+      setPromptDefault('')
       return
     }
     let cancelled = false
@@ -130,6 +171,7 @@ export default function ThreadsGeneratePage() {
       .then(data => {
         if (cancelled) return
         setPromptText(data.text_prompt ?? data.text_default)
+        setPromptDefault(data.text_default)
         setPromptStatus('loaded')
       })
       .catch(e => {
@@ -159,6 +201,37 @@ export default function ThreadsGeneratePage() {
 
   const isDemoMode = !selectedAccount
   const selectedRefName = referenceAccounts.find(r => r.id === selectedRefAccount)?.name
+
+  async function handleSavePrompt() {
+    if (!selectedAccount) return
+    setPromptSaving(true)
+    try {
+      const res = await fetch('/api/prompts', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          accountId: selectedAccount,
+          textPrompt: promptText === promptDefault ? '' : promptText,
+        }),
+      })
+      const json = await res.json() as PromptResponse & { error?: string }
+      if (!res.ok || json.error) {
+        toast.error(json.error ?? 'プロンプトの保存に失敗しました')
+        return
+      }
+      setPromptText(json.text_prompt ?? json.text_default)
+      setPromptDefault(json.text_default)
+      toast.success('プロンプトを保存しました')
+    } catch {
+      toast.error('プロンプトの保存に失敗しました')
+    } finally {
+      setPromptSaving(false)
+    }
+  }
+
+  function handleResetPrompt() {
+    setPromptText(promptDefault)
+  }
 
   async function handleGenerate(overrideTheme?: string) {
     const targetTheme = overrideTheme ?? theme
@@ -664,7 +737,15 @@ export default function ThreadsGeneratePage() {
             このアカウントで使われるプロンプトを表示
           </summary>
           <div className="mt-3">
-            <PromptPanelBody status={promptStatus} text={promptText} />
+            <PromptPanelBody
+              status={promptStatus}
+              value={promptText}
+              onChange={setPromptText}
+              onSave={handleSavePrompt}
+              onReset={handleResetPrompt}
+              saving={promptSaving}
+              canEdit={!!selectedAccount}
+            />
           </div>
         </details>
       </div>
@@ -678,7 +759,15 @@ export default function ThreadsGeneratePage() {
             boxShadow: 'rgba(50,50,93,0.08) 0px 8px 20px -8px, rgba(0,0,0,0.05) 0px 5px 10px -5px',
           }}
         >
-          <PromptPanelBody status={promptStatus} text={promptText} />
+          <PromptPanelBody
+              status={promptStatus}
+              value={promptText}
+              onChange={setPromptText}
+              onSave={handleSavePrompt}
+              onReset={handleResetPrompt}
+              saving={promptSaving}
+              canEdit={!!selectedAccount}
+            />
         </div>
       </aside>
     </div>

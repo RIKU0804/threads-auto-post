@@ -11,7 +11,6 @@ import {
   LogOut,
   Zap,
   FileText,
-  Sparkles,
   Settings,
   MoreHorizontal,
 } from 'lucide-react'
@@ -25,7 +24,6 @@ const navItems = [
   { href: '/dashboard/generate', label: '投稿生成', icon: PenLine },
   { href: '/dashboard/drafts', label: '下書き', icon: FileText },
   { href: '/dashboard/accounts', label: 'アカウント', icon: Users },
-  { href: '/dashboard/prompts', label: 'プロンプト', icon: Sparkles },
   { href: '/dashboard/logs', label: 'ログ', icon: ScrollText },
   { href: '/dashboard/settings', label: '設定', icon: Settings },
 ]
