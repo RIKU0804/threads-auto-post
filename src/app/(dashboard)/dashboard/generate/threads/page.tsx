@@ -294,6 +294,7 @@ export default function ThreadsGeneratePage() {
                 <select
                   value={selectedAccount}
                   onChange={e => setSelectedAccount(e.target.value)}
+                  aria-label="投稿先アカウント"
                   className="w-full appearance-none rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-hidden transition focus:border-[#00A3BF] focus:ring-2 focus:ring-[#00A3BF]/20"
                 >
                   <option value="">デモモード（デフォルト設定）</option>
@@ -336,8 +337,9 @@ export default function ThreadsGeneratePage() {
               <input
                 value={theme}
                 onChange={e => setTheme(e.target.value)}
-                onKeyDown={e => e.key === 'Enter' && handleGenerate()}
+                onKeyDown={e => e.key === 'Enter' && !e.nativeEvent.isComposing && handleGenerate()}
                 placeholder="例：高卒でも転職できる3つの理由"
+                aria-label="投稿テーマ"
                 className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-hidden transition placeholder-gray-400 focus:border-[#00A3BF] focus:ring-2 focus:ring-[#00A3BF]/20"
               />
             </div>

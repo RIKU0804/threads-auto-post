@@ -258,6 +258,7 @@ export default function XGeneratePage() {
                 <select
                   value={selectedAccount}
                   onChange={e => setSelectedAccount(e.target.value)}
+                  aria-label="投稿先アカウント"
                   className="w-full appearance-none rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-hidden transition focus:border-gray-700 focus:ring-2 focus:ring-gray-700/10"
                 >
                   <option value="">デモモード</option>
@@ -327,8 +328,9 @@ export default function XGeneratePage() {
               <input
                 value={theme}
                 onChange={e => setTheme(e.target.value)}
-                onKeyDown={e => e.key === 'Enter' && handleGenerate()}
+                onKeyDown={e => e.key === 'Enter' && !e.nativeEvent.isComposing && handleGenerate()}
                 placeholder="例：毎日継続するための3つのコツ、AIで仕事が楽になった話"
+                aria-label="投稿テーマ"
                 className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-hidden transition placeholder-gray-400 focus:border-gray-700 focus:ring-2 focus:ring-gray-700/10"
               />
             </div>

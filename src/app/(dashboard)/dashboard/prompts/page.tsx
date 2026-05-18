@@ -80,6 +80,7 @@ function SectionCard({
           placeholder={KIND_META[kind].placeholder}
           disabled={disabled}
           className="font-mono text-xs leading-relaxed"
+          aria-label={`${meta.label}の追加指示`}
         />
         <p className="mt-1 text-[11px] text-gray-400">{value.length} / {MAX_LEN}（空欄ならデフォルトのみ使用）</p>
       </div>
@@ -239,6 +240,7 @@ export default function PromptsPage() {
                 onChange={e => setSelectedAccount(e.target.value)}
                 disabled={settingsLoading || saving}
                 className="mt-1"
+                aria-label="プロンプト設定の対象アカウント"
               >
                 {accounts.map(a => (
                   <option key={a.id} value={a.id}>

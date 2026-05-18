@@ -85,10 +85,12 @@ function KeyField({
             onChange={e => onChange(e.target.value)}
             placeholder={hasKey ? '（変更しない場合は空欄）' : 'sk-... または sk-or-...'}
             className="pr-10 font-mono"
+            aria-label={`${label}を入力`}
           />
           <button
             type="button"
             onClick={onToggleShow}
+            aria-label={show ? 'キーを隠す' : 'キーを表示'}
             className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
           >
             {show ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
