@@ -303,6 +303,9 @@ export default function AccountsPage() {
       threadsUserId: '',
       instagramUserId: '',
       xUserId: '',
+      xApiKey: '',
+      xApiSecret: '',
+      xAccessSecret: '',
       clientId: '',
       clientSecret: '',
     })
