@@ -11,6 +11,7 @@ import { Button } from '@/components/ui/Button'
 import { Textarea } from '@/components/ui/Textarea'
 import { cx } from '@/lib/utils'
 import { useToast } from '@/components/ui/Toast'
+import { useThemeSuggestions } from '@/lib/hooks/use-theme-suggestions'
 import type { Account, Post } from '@/types/database'
 
 type Step = 'input' | 'preview' | 'done'
@@ -58,8 +59,6 @@ export default function XGeneratePage() {
   const [postMode, setPostMode] = useState<PostMode>('single')
   const [step, setStep] = useState<Step>('input')
   const [loading, setLoading] = useState(false)
-  const [themeSuggestions, setThemeSuggestions] = useState<string[]>([])
-  const [suggestLoading, setSuggestLoading] = useState(false)
 
   // single mode
   const [generatedText, setGeneratedText] = useState('')
@@ -68,6 +67,8 @@ export default function XGeneratePage() {
 
   const [generatedSummary, setGeneratedSummary] = useState('')
   const [savedPost, setSavedPost] = useState<Post | null>(null)
+
+  const { themeSuggestions, setThemeSuggestions, suggestLoading, suggestThemes } = useThemeSuggestions(selectedAccount)
 
   useEffect(() => {
     fetch('/api/accounts')
@@ -84,25 +85,6 @@ export default function XGeneratePage() {
   }, [])
 
   const isDemoMode = !selectedAccount
-
-  async function handleSuggestThemes() {
-    setSuggestLoading(true)
-    setThemeSuggestions([])
-    try {
-      const res = await fetch('/api/generate/themes', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ accountId: selectedAccount || undefined }),
-      })
-      const data = await res.json() as { themes?: string[]; error?: string }
-      if (data.error) throw new Error(data.error)
-      setThemeSuggestions(data.themes ?? [])
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'テーマ生成に失敗しました')
-    } finally {
-      setSuggestLoading(false)
-    }
-  }
 
   async function handleGenerate(overrideTheme?: string) {
     const targetTheme = overrideTheme ?? theme
@@ -316,7 +298,7 @@ export default function XGeneratePage() {
               <div className="mb-1.5 flex items-center justify-between">
                 <SectionLabel>投稿テーマ</SectionLabel>
                 <button
-                  onClick={handleSuggestThemes}
+                  onClick={suggestThemes}
                   disabled={suggestLoading}
                   className="flex items-center gap-1 text-xs font-medium text-gray-600 hover:text-gray-800 disabled:opacity-50 transition-colors"
                 >

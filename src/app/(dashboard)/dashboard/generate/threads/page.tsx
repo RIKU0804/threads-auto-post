@@ -12,6 +12,7 @@ import { Button } from '@/components/ui/Button'
 import { Textarea } from '@/components/ui/Textarea'
 import { cx } from '@/lib/utils'
 import { useToast } from '@/components/ui/Toast'
+import { useThemeSuggestions } from '@/lib/hooks/use-theme-suggestions'
 import type { Account, Post, ReferenceAccount } from '@/types/database'
 
 type Step = 'input' | 'preview' | 'done'
@@ -41,8 +42,6 @@ export default function ThreadsGeneratePage() {
   const [postType, setPostType] = useState<PostType | ''>('')
   const [step, setStep] = useState<Step>('input')
   const [loading, setLoading] = useState(false)
-  const [themeSuggestions, setThemeSuggestions] = useState<string[]>([])
-  const [suggestLoading, setSuggestLoading] = useState(false)
   const [generatedText, setGeneratedText] = useState('')
   const [generatedSummary, setGeneratedSummary] = useState('')
   const [imageUrl, setImageUrl] = useState('')
@@ -56,6 +55,8 @@ export default function ThreadsGeneratePage() {
   const [selectedRefAccount, setSelectedRefAccount] = useState('')
   const [referencePost, setReferencePost] = useState('')
   const [referenceImage, setReferenceImage] = useState<{ base64: string; mimeType: string } | null>(null)
+
+  const { themeSuggestions, setThemeSuggestions, suggestLoading, suggestThemes } = useThemeSuggestions(selectedAccount)
 
   useEffect(() => {
     Promise.all([
@@ -76,25 +77,6 @@ export default function ThreadsGeneratePage() {
 
   const isDemoMode = !selectedAccount
   const selectedRefName = referenceAccounts.find(r => r.id === selectedRefAccount)?.name
-
-  async function handleSuggestThemes() {
-    setSuggestLoading(true)
-    setThemeSuggestions([])
-    try {
-      const res = await fetch('/api/generate/themes', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ accountId: selectedAccount || undefined }),
-      })
-      const data = await res.json() as { themes?: string[]; error?: string }
-      if (data.error) throw new Error(data.error)
-      setThemeSuggestions(data.themes ?? [])
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'テーマ生成に失敗しました')
-    } finally {
-      setSuggestLoading(false)
-    }
-  }
 
   async function handleGenerate(overrideTheme?: string) {
     const targetTheme = overrideTheme ?? theme
@@ -325,7 +307,7 @@ export default function ThreadsGeneratePage() {
               <div className="mb-1.5 flex items-center justify-between">
                 <SectionLabel>投稿テーマ</SectionLabel>
                 <button
-                  onClick={handleSuggestThemes}
+                  onClick={suggestThemes}
                   disabled={suggestLoading}
                   className="flex items-center gap-1 text-xs font-medium text-[#006F83] hover:text-[#005A6B] disabled:opacity-50 transition-colors"
                 >
