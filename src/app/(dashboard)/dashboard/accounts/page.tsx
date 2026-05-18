@@ -33,32 +33,34 @@ interface SetupGuide { intro: string; links: GuideLink[]; steps: string[] }
 
 const SETUP_GUIDES: Record<SupportedPlatform, SetupGuide> = {
   threads: {
-    intro: 'Meta アプリは1個だけ作れば全 Threads アカウントで使い回せます。アカウントを増やすときは「そのアカウントで発行したトークンを貼る」だけです。',
+    intro: 'Meta アプリは「最初の1回」だけ作れば、何アカウント増えても作り直し不要です。Meta アプリ＝1個（あなたの Facebook で作る）／アクセストークン＝アカウントごとに発行、という関係です（Threads API 公式仕様）。',
     links: [
       { label: 'Meta for Developers を開く', href: 'https://developers.facebook.com/apps' },
+      { label: 'Threads API 公式手順', href: 'https://developers.facebook.com/docs/threads/get-started' },
     ],
     steps: [
-      '上のリンクで「アプリを作成」→ ユースケースは「その他」→ タイプ「ビジネス」で作成（初回のみ）',
-      'アプリのダッシュボード →「製品を追加」から “Threads API” を選んで「設定」',
-      'Threads API の画面で、投稿したい Threads アカウントで認可してアクセストークンを生成',
-      '長期トークン（60日）に変換しておくと運用が楽（任意）',
-      '生成された access token をコピー',
-      '↓ の「Access Token」に貼り付け。「Threads User ID」は空欄でOK（自動取得します）',
+      '【初回のみ】developers.facebook.com に自分の Facebook アカウントでログインし、開発者登録を済ませる',
+      '【初回のみ・アプリは1個】「アプリを作成」→ ユースケースで「Threads」を選択 → アプリ名を入れて作成（このアプリを全アカウントで使い回します）',
+      '⚠️必須: App Dashboard →「アプリの役割」→「役割」タブ →「利用者を追加」→「Threads Tester」で、投稿したい Threads アカウントを招待',
+      '⚠️必須: その Threads アカウントの Threads アプリ/サイトを開き、設定 → 招待（リクエスト）を「承認」する（これを忘れるとトークンが発行できません）',
+      'アプリの Threads API 設定画面で権限 threads_basic（必須）＋ threads_content_publish を付け、そのアカウントを認可してアクセストークンを生成',
+      '表示された access token をコピー',
+      '↓ の「Access Token」に貼り付け。「Threads User ID」は空欄でOK（自動取得します）。2個目以降のアカウントは手順3〜7をそのアカウントで繰り返すだけ（アプリ作成は不要）',
     ],
   },
   instagram: {
-    intro: 'Instagram は「プロアカウント」を Facebook ページに連携している必要があります。Meta アプリは1個で使い回せます。',
+    intro: 'Threads と同じく Meta アプリは「最初の1回」だけ作れば全アカウントで使い回せます。投稿先 Instagram は「プロアカウント」で Facebook ページに連携している必要があります。',
     links: [
       { label: 'Meta for Developers を開く', href: 'https://developers.facebook.com/apps' },
       { label: 'Graph API Explorer を開く', href: 'https://developers.facebook.com/tools/explorer' },
     ],
     steps: [
-      'アプリを作成（タイプ「ビジネス」）し、製品に “Instagram Graph API” と “Facebook ログイン” を追加（初回のみ）',
-      '投稿先 Instagram を「プロアカウント」にし、Facebook ページに連携',
-      'Graph API Explorer を開き、対象アプリと該当 Facebook ページを選択',
+      '【初回のみ・アプリは1個】「アプリを作成」→ ユースケースで Instagram 系を選択し、製品に “Instagram Graph API” と “Facebook ログイン” を追加',
+      '投稿先 Instagram を「プロアカウント」にし、対象の Facebook ページに連携（アカウントごと）',
+      'Graph API Explorer を開き、作成したアプリと該当 Facebook ページを選択',
       '権限を付与: instagram_basic / instagram_content_publish / pages_show_list / pages_read_engagement',
       '「Generate Access Token」を押し、表示された Page アクセストークンをコピー',
-      '↓ の「Access Token」に貼り付け。「Business Account ID」は空欄でOK（自動取得します）',
+      '↓ の「Access Token」に貼り付け。「Business Account ID」は空欄でOK（自動取得します）。2個目以降のアカウントは手順2〜6を繰り返すだけ（アプリ作成は不要）',
     ],
   },
   x: {
