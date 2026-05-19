@@ -256,6 +256,9 @@ export default function ThreadsGeneratePage() {
       if (data.error) throw new Error(data.error)
       setGeneratedText(data.content)
       setGeneratedSummary(data.summary ?? '')
+      // 本文が変わったら古い図解は内容と不一致になるためクリア
+      setImageUrl('')
+      setImageEditPrompt('')
       if (data.draftId) setDraftId(data.draftId)
       setStep('preview')
     } catch (e) {
@@ -712,7 +715,7 @@ export default function ThreadsGeneratePage() {
                   <input
                     value={imageEditPrompt}
                     onChange={e => setImageEditPrompt(e.target.value)}
-                    onKeyDown={e => e.key === 'Enter' && handleEditImage()}
+                    onKeyDown={e => e.key === 'Enter' && !e.nativeEvent.isComposing && handleEditImage()}
                     placeholder="修正指示（例：背景を青に、テキストを日本語に）"
                     disabled={imageEditing}
                     className="min-w-0 flex-1 rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-hidden placeholder-gray-400 transition focus:border-[#00A3BF] focus:ring-2 focus:ring-[#00A3BF]/20 disabled:opacity-50"
