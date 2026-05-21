@@ -1,0 +1,27 @@
+{
+  "name": "threads-auto-post-remotion",
+  "version": "1.0.0",
+  "description": "AI short-video generation (TikTok 9:16) for threads-auto-post",
+  "private": true,
+  "scripts": {
+    "dev": "remotion studio --port=3002",
+    "build": "remotion render ShortVideoMain out/short-video.mp4",
+    "build:props": "remotion render ShortVideoMain out/short-video.mp4 --props=./out/props.json",
+    "upgrade": "remotion upgrade"
+  },
+  "dependencies": {
+    "@remotion/cli": "4.0.460",
+    "@remotion/google-fonts": "4.0.460",
+    "@remotion/renderer": "4.0.460",
+    "@remotion/transitions": "4.0.460",
+    "@remotion/zod-types": "4.0.460",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "remotion": "4.0.460",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/react": "^19.0.0",
+    "typescript": "^5.7.0"
+  }
+}

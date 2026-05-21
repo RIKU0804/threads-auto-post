@@ -66,21 +66,8 @@ export class YouTubeAuthError extends Error {
   }
 }
 
-/**
- * 公開 URL の動画を取得してバイト列にする補助関数。
- * （投稿側で Supabase storage 等の公開 URL を渡す用途を想定）
- */
-export async function fetchVideoBytes(
-  url: string,
-): Promise<{ bytes: Uint8Array; mimeType: string }> {
-  if (!/^https:\/\//i.test(url)) {
-    throw new Error('動画URLは https:// で始まる必要があります')
-  }
-  const res = await fetch(url, { signal: AbortSignal.timeout(UPLOAD_TIMEOUT_MS) })
-  if (!res.ok) throw new Error(`動画の取得に失敗しました (HTTP ${res.status})`)
-  const bytes = new Uint8Array(await res.arrayBuffer())
-  return { bytes, mimeType: res.headers.get('content-type') ?? 'video/mp4' }
-}
+// NOTE: 公開URLから動画バイト列を取得するヘルパーは SSRF 防御を持つ
+// `fetchVideoBytesSafe` を publishers.ts 内に集約済み。ここからは export しない。
 
 /**
  * レジューマブルアップロードで動画を投稿。

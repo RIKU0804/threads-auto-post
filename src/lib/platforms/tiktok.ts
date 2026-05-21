@@ -1,9 +1,5 @@
 // TikTok Content Posting API adapter（OAuth 2.0 / Direct Post 方式）
 //
-// ※ このモジュールは現状どこからも import されていない。将来 TikTok 連携を
-//   有効化する際に publishers.ts / Platform 型 / UI に組み込む前提の下準備コード。
-//   （ユーザー要望: コードだけ用意し UI には出さない）
-//
 // Docs:
 // - Content Posting API: https://developers.tiktok.com/doc/content-posting-api-reference-direct-post/
 // - OAuth:               https://developers.tiktok.com/doc/oauth-user-access-token-management/
@@ -14,8 +10,11 @@
 //   3) post/publish/status/fetch で公開完了をポーリング
 // という 3 ステップ。ここでは公開動画 URL を渡す PULL_FROM_URL を実装する。
 
+import 'server-only'
+
 const TIKTOK_API_BASE = 'https://open.tiktokapis.com/v2'
 const TIKTOK_OAUTH_TOKEN_URL = 'https://open.tiktokapis.com/v2/oauth/token/'
+export const TIKTOK_OAUTH_AUTHORIZE_URL = 'https://www.tiktok.com/v2/auth/authorize/'
 const REQUEST_TIMEOUT_MS = 30_000
 
 export interface TikTokCredentials {
@@ -229,6 +228,72 @@ export async function getTikTokUser(cred: TikTokCredentials): Promise<TikTokUser
  * Refresh token で User Access Token を更新。
  * client_key / client_secret は TikTok 開発者ポータルのアプリ資格情報。
  */
+export interface TikTokTokenExchangeResult {
+  accessToken: string
+  refreshToken: string
+  /** epoch ミリ秒 */
+  expiresAt: number
+  openId: string
+  scope: string
+}
+
+/**
+ * OAuth 認可コードを アクセストークン + リフレッシュトークンと交換。
+ * Authorization Code → User Access Token フロー。
+ * Docs: https://developers.tiktok.com/doc/oauth-user-access-token-management/
+ */
+export async function exchangeTikTokCode(
+  clientKey: string,
+  clientSecret: string,
+  code: string,
+  redirectUri: string,
+): Promise<TikTokTokenExchangeResult> {
+  // redirect_uri は Developer Portal 登録値と完全一致する必要があり、ユーザー入力
+  // 由来であってはならない（呼び出し側は process.env.TIKTOK_REDIRECT_URI 必須）。
+  if (!redirectUri || !/^https:\/\//.test(redirectUri)) {
+    throw new TikTokAuthError('TIKTOK_REDIRECT_URI が未設定または不正です')
+  }
+
+  const res = await fetch(TIKTOK_OAUTH_TOKEN_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      client_key: clientKey,
+      client_secret: clientSecret,
+      code,
+      grant_type: 'authorization_code',
+      redirect_uri: redirectUri,
+    }).toString(),
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+  })
+
+  if (!res.ok) {
+    // トークンエンドポイントのエラーボディは秘密情報をエコーし得るため status のみ記録
+    console.error('[TikTok OAuth]', 'code exchange failed', res.status)
+    throw new TikTokAuthError('TikTok 認可コードの交換に失敗しました')
+  }
+
+  const json = (await res.json()) as {
+    access_token?: string
+    refresh_token?: string
+    expires_in?: number
+    open_id?: string
+    scope?: string
+    error?: string
+    error_description?: string
+  }
+  if (!json.access_token || !json.refresh_token || !json.open_id) {
+    throw new TikTokAuthError('TikTok 認可コードの交換に失敗しました')
+  }
+  return {
+    accessToken: json.access_token,
+    refreshToken: json.refresh_token,
+    expiresAt: Date.now() + (json.expires_in ?? 86400) * 1000,
+    openId: json.open_id,
+    scope: json.scope ?? '',
+  }
+}
+
 export async function refreshTikTokToken(
   clientKey: string,
   clientSecret: string,
