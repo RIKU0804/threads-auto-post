@@ -16,12 +16,15 @@ import { decryptSecret } from '@/lib/crypto'
 const ELEVENLABS_API_BASE = 'https://api.elevenlabs.io/v1'
 const REQUEST_TIMEOUT_MS = 60_000
 
-// 日本語対応の多言語 v2 ボイス (Rachel) を既定値として採用。
-// 公式の "Premade voices" の中で eleven_multilingual_v2 と組み合わせて
-// 日本語ナレーションを安定して出力できる定番 ID。
+// 日本語対応の多言語ボイス (Rachel) を既定値として採用。
 // ユーザーが ElevenLabsVoiceOptions.voiceId で上書き可能。
 const DEFAULT_VOICE_ID = '21m00Tcm4TlvDq8ikWAM'
-const DEFAULT_MODEL_ID = 'eleven_multilingual_v2'
+
+// 最新フラッグシップ eleven_v3 を既定モデルに採用。
+// - 表現力・多言語品質ともに v2 より大幅向上（日本語ナレーションでもイントネーションが自然）
+// - voice_settings (stability / similarity_boost / style) は引き続き有効
+// - アカウントによって未開放の場合は ElevenLabsVoiceOptions.modelId で `eleven_multilingual_v2` 等にフォールバック可
+const DEFAULT_MODEL_ID = 'eleven_v3'
 
 // mp3_44100_128 を採用 (MP3 / 44.1kHz / 128kbps)。
 // - Remotion / FFmpeg 双方で扱いやすく、品質と容量のバランスが良い。
@@ -34,7 +37,7 @@ const MAX_NARRATION_CHARS = 5_000
 export interface ElevenLabsVoiceOptions {
   /** ElevenLabs voice id。未指定なら日本語対応の既定ボイスを使用。 */
   voiceId?: string
-  /** モデル ID。日本語は eleven_multilingual_v2 を推奨。 */
+  /** モデル ID。既定は最新の eleven_v3。プラン未開放時は eleven_multilingual_v2 等にフォールバック可。 */
   modelId?: string
   /** 0.0–1.0。低いほど抑揚が増す。 */
   stability?: number
