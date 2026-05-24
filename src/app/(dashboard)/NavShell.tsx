@@ -13,15 +13,25 @@ import {
   FileText,
   Settings,
   MoreHorizontal,
+  Video as VideoIcon,
 } from 'lucide-react'
 import { cx } from '@/lib/utils'
 import { createClient } from '@/lib/supabase-browser'
 import { ToastProvider } from '@/components/ui/Toast'
 import { ConfirmProvider } from '@/components/ui/ConfirmDialog'
 
-const navItems = [
+interface NavItem {
+  href: string
+  label: string
+  icon: React.ComponentType<{ className?: string }>
+  /** Vercel 上で表示する小バッジ（例: "ローカル"）。未設定なら表示しない */
+  vercelBadge?: string
+}
+
+const navItems: NavItem[] = [
   { href: '/dashboard', label: 'ホーム', icon: LayoutDashboard },
   { href: '/dashboard/generate', label: '投稿生成', icon: PenLine },
+  { href: '/dashboard/videos', label: '動画', icon: VideoIcon, vercelBadge: 'ローカル' },
   { href: '/dashboard/drafts', label: '下書き', icon: FileText },
   { href: '/dashboard/accounts', label: 'アカウント', icon: Users },
   { href: '/dashboard/logs', label: 'ログ', icon: ScrollText },
@@ -33,10 +43,17 @@ const MOBILE_PRIMARY = ['/dashboard', '/dashboard/generate', '/dashboard/drafts'
 const mobilePrimaryItems = navItems.filter(i => MOBILE_PRIMARY.includes(i.href))
 const mobileMenuItems = navItems.filter(i => !MOBILE_PRIMARY.includes(i.href))
 
+function isVercelClient(): boolean {
+  if (process.env.NEXT_PUBLIC_VIDEO_RENDERING_ENABLED === '1') return false
+  const env = process.env.NEXT_PUBLIC_VERCEL_ENV
+  return env === 'production' || env === 'preview'
+}
+
 export default function NavShell({ children }: { children: React.ReactNode }) {
   const router = useRouter()
   const pathname = usePathname()
   const [menuOpen, setMenuOpen] = useState(false)
+  const showVercelBadges = isVercelClient()
 
   async function handleLogout() {
     const supabase = createClient()
@@ -69,7 +86,7 @@ export default function NavShell({ children }: { children: React.ReactNode }) {
 
         {/* Nav links */}
         <div className="flex flex-1 flex-col overflow-y-auto px-3 py-3 gap-0.5">
-          {navItems.map(({ href, label, icon: Icon }) => {
+          {navItems.map(({ href, label, icon: Icon, vercelBadge }) => {
             const active = isActive(href)
             return (
               <Link
@@ -85,7 +102,15 @@ export default function NavShell({ children }: { children: React.ReactNode }) {
                 <Icon
                   className={cx('h-4 w-4 shrink-0', active ? 'text-[#00A3BF]' : 'text-slate-400')}
                 />
-                {label}
+                <span className="flex-1">{label}</span>
+                {showVercelBadges && vercelBadge && (
+                  <span
+                    className="rounded-full bg-amber-400/20 px-1.5 py-0.5 text-[9px] font-bold leading-none text-amber-300"
+                    title="この機能はローカル環境（npm run dev）でのみ動作します"
+                  >
+                    {vercelBadge}
+                  </span>
+                )}
               </Link>
             )
           })}
@@ -135,7 +160,7 @@ export default function NavShell({ children }: { children: React.ReactNode }) {
             onClick={e => e.stopPropagation()}
           >
             <div className="mx-auto mb-2 h-1 w-10 rounded-full bg-slate-200" />
-            {mobileMenuItems.map(({ href, label, icon: Icon }) => {
+            {mobileMenuItems.map(({ href, label, icon: Icon, vercelBadge }) => {
               const active = isActive(href)
               return (
                 <Link
@@ -148,7 +173,12 @@ export default function NavShell({ children }: { children: React.ReactNode }) {
                   )}
                 >
                   <Icon className={cx('h-4 w-4', active ? 'text-[#00A3BF]' : 'text-slate-400')} />
-                  {label}
+                  <span className="flex-1">{label}</span>
+                  {showVercelBadges && vercelBadge && (
+                    <span className="rounded-full bg-amber-100 px-1.5 py-0.5 text-[9px] font-bold leading-none text-amber-700">
+                      {vercelBadge}
+                    </span>
+                  )}
                 </Link>
               )
             })}

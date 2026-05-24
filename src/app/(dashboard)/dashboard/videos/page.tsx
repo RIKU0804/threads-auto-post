@@ -4,6 +4,7 @@ import { Plus, Video as VideoIcon } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
 import { Card } from '@/components/ui/Card'
 import { VideoCard } from '@/components/videos/VideoCard'
+import { LocalOnlyBanner } from '@/components/video/LocalOnlyBanner'
 import { createServerSupabaseClient } from '@/lib/supabase'
 import type { Video } from '@/types/database'
 
@@ -41,6 +42,8 @@ export default async function VideosPage() {
           </Button>
         </Link>
       </div>
+
+      <LocalOnlyBanner variant="info" />
 
       {list.length === 0 ? (
         <Card className="py-14 text-center">

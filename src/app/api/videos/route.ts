@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createServerSupabaseClient } from '@/lib/supabase'
 import { checkRateLimit } from '@/lib/rate-limit'
 import { enqueueVideoPipeline } from '@/lib/video/jobs'
+import { videoCapability } from '@/lib/runtime-env'
 
 const MIN_THEME_LEN = 3
 const MAX_THEME_LEN = 200
@@ -45,6 +46,16 @@ function clampInt(v: unknown, min: number, max: number, fallback: number): numbe
 
 export async function POST(req: NextRequest) {
   try {
+    // 動画生成は Vercel Functions では実行不可（Chromium 1.5GB / タイムアウト）
+    // VIDEO_RENDERING_ENABLED=1 で強制有効化可（自前ワーカー運用時の脱出ハッチ）
+    const capability = videoCapability()
+    if (!capability.enabled) {
+      return NextResponse.json(
+        { error: capability.message, code: 'LOCAL_ONLY' },
+        { status: 503 },
+      )
+    }
+
     const supabase = await createServerSupabaseClient()
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return NextResponse.json({ error: '認証が必要です' }, { status: 401 })

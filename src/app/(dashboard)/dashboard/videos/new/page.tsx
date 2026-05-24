@@ -8,6 +8,7 @@ import { Card } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
 import { Textarea } from '@/components/ui/Textarea'
 import { useToast } from '@/components/ui/Toast'
+import { LocalOnlyBanner } from '@/components/video/LocalOnlyBanner'
 import type { Video } from '@/types/database'
 
 const MIN_THEME_LEN = 3
@@ -123,6 +124,8 @@ export default function NewVideoPage() {
           テーマを入力すると AI が台本・画像・音声を生成して 1 本の動画にまとめます（約3分）
         </p>
       </div>
+
+      <LocalOnlyBanner variant="block" />
 
       <Card className="space-y-5">
         {/* テーマ */}
