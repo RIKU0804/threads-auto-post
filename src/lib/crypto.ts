@@ -15,6 +15,9 @@ import crypto from 'crypto'
 
 const PREFIX = 'v1:'
 
+let plaintextWarnedRecently = false
+const PLAINTEXT_WARN_INTERVAL_MS = 60_000
+
 function parseKey(raw: string): Buffer {
   // hex 64 文字 or base64 を許容（base64 は厳密判定: ラウンドトリップ一致 + 32 バイト）
   if (/^[0-9a-fA-F]{64}$/.test(raw)) {
@@ -80,6 +83,11 @@ export function decryptSecret(stored: string | null | undefined): string | null 
   if (!stored) return null
   if (!stored.startsWith(PREFIX)) {
     // 移行前の平文データ
+    if (!plaintextWarnedRecently) {
+      console.warn('[crypto] decryptSecret: legacy plaintext value detected (no v1: prefix). Re-save the key to encrypt.')
+      plaintextWarnedRecently = true
+      setTimeout(() => { plaintextWarnedRecently = false }, PLAINTEXT_WARN_INTERVAL_MS)
+    }
     return stored
   }
   const [ivB64, tagB64, ctB64] = stored.slice(PREFIX.length).split(':')

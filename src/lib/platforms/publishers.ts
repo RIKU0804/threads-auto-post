@@ -7,7 +7,13 @@ import type { Account, Platform, Post, Video } from '@/types/database'
 import { createAdminClient } from '@/lib/supabase-admin'
 import { decryptSecret, encryptSecret, isEncryptionAvailable } from '@/lib/crypto'
 import { createThreadsPost, refreshThreadsToken, ThreadsAuthError } from './threads'
-import { createInstagramPost, InstagramAuthError } from './instagram'
+import {
+  createInstagramPost,
+  createInstagramReelPost,
+  INSTAGRAM_CAPTION_MAX,
+  InstagramAuthError,
+  refreshInstagramAccessToken,
+} from './instagram'
 import { createXTweet, createXThread, uploadXMedia, XAuthError, type XCredentials } from './x'
 import {
   refreshYouTubeToken,
@@ -128,7 +134,7 @@ function assertFetchableImageUrl(raw: string): void {
   assertFetchableHttpsUrl(raw, '添付画像')
 }
 
-function assertFetchableVideoUrl(raw: string): void {
+export function assertFetchableVideoUrl(raw: string): void {
   assertFetchableHttpsUrl(raw, '動画ファイル')
 }
 
@@ -256,7 +262,7 @@ export async function publishPost(ctx: PublishContext): Promise<PublishResult> {
 // 入力 (Video) も出力 (publishedUrl) も異なるため別インターフェースで定義する。
 // ============================================================================
 
-export type VideoPlatform = Extract<Platform, 'tiktok' | 'youtube'>
+export type VideoPlatform = Extract<Platform, 'tiktok' | 'youtube' | 'instagram'>
 
 export interface VideoPublishContext {
   video: Pick<Video, 'id' | 'title' | 'script' | 'final_video_url'>
@@ -278,6 +284,13 @@ export interface VideoPublishOptions {
   tiktokDisableDuet?: boolean
   /** TikTok: スティッチ無効化 */
   tiktokDisableStitch?: boolean
+  /** Instagram Reels: メインフィードにも露出させる。デフォルト true */
+  instagramShareToFeed?: boolean
+  /**
+   * 内部用: Instagram Reels publisher にコンテナ作成コールバック等を渡す。
+   * アンダースコア prefix の通り公開 API ではなく publish-helper からのみ使う。
+   */
+  _instagramExtras?: InstagramReelsPublishExtras
 }
 
 export interface VideoPublishResult {
@@ -285,6 +298,12 @@ export interface VideoPublishResult {
   platformPublishId: string
   /** ブラウザで開ける公開 URL */
   publishedUrl?: string
+  /**
+   * プラットフォームによっては「中間 ID」(Instagram Reels の container ID 等) が
+   * 公開メディア ID とは別に存在する。途中失敗時のリカバリ手掛かりとして
+   * publish-helper が DB に書き残せるようにここに載せる。
+   */
+  intermediateId?: string
 }
 
 export interface VideoPublisher {
@@ -544,6 +563,10 @@ const tiktokVideoPublisher: VideoPublisher = {
     if (!video.final_video_url) {
       throw new Error('動画ファイルが生成されていません')
     }
+    // validate() を通過していても TS の narrowing は publish 境界で消えるので明示
+    if (!account.access_token) {
+      throw new Error('TikTok access_token が空です')
+    }
     // unaudited app は SELF_ONLY 強制。アプリ審査通過後に options で上書き可能。
     const privacy: TikTokPrivacy = options?.tiktokPrivacyLevel ?? 'SELF_ONLY'
     const accessToken = decryptTikTokAccessToken(account)
@@ -624,17 +647,134 @@ async function refreshTikTokAccountToken(account: Account): Promise<Account | nu
   }
 }
 
+/**
+ * Instagram long-lived access token を refresh エンドポイントで rotate し、
+ * DB に保存して新 Account を返す（呼び出し元の account は mutate しない）。
+ *
+ * Instagram token は plaintext で保存される運用（accounts POST 経路がそうなっている）
+ * ため、ここでも暗号化はしない。将来的に encryptSecret に統一する余地はあるが、
+ * 本パッチでは scope 外とする。
+ *
+ * Docs: GET /refresh_access_token?grant_type=ig_refresh_token
+ */
+async function refreshInstagramAccountToken(account: Account): Promise<Account | null> {
+  if (!account.access_token) return null
+  try {
+    const refreshed = await refreshInstagramAccessToken(account.access_token)
+    const nextExpiresAt = new Date(refreshed.expiresAt).toISOString()
+    const admin = createAdminClient()
+    await admin
+      .from('accounts')
+      .update({
+        access_token: refreshed.accessToken,
+        token_expires_at: nextExpiresAt,
+      })
+      .eq('id', account.id)
+
+    return {
+      ...account,
+      access_token: refreshed.accessToken,
+      token_expires_at: nextExpiresAt,
+    }
+  } catch (e) {
+    console.error(
+      '[publishers] Instagram refresh failed',
+      e instanceof Error ? e.message : 'unknown',
+    )
+    return null
+  }
+}
+
+// ---------- Instagram Reels ----------
+
+function buildInstagramReelCaption(video: Pick<Video, 'title' | 'script'>): string {
+  const t = (video.title ?? '').trim()
+  if (t) return t.slice(0, INSTAGRAM_CAPTION_MAX)
+  const firstLine = (video.script ?? '').trim().split(/\n+/)[0] ?? ''
+  return firstLine.slice(0, INSTAGRAM_CAPTION_MAX)
+}
+
+/**
+ * Instagram Reels publisher の publish 時に containerId を呼び出し側へ
+ * 伝搬するためのオプション。publish-helper.ts が DB 永続化のために渡す。
+ */
+export interface InstagramReelsPublishExtras {
+  /**
+   * createInstagramReelPost がコンテナ作成直後（poll/publish 前）に
+   * 呼び出すコールバック。呼び出し元はここで containerId を DB に書き残す。
+   */
+  onContainerCreated?: (containerId: string) => Promise<void> | void
+}
+
+const instagramReelsPublisher: VideoPublisher = {
+  platform: 'instagram',
+  validate({ video, account }) {
+    if (account.platform !== 'instagram') {
+      throw new Error('アカウントが Instagram ではありません')
+    }
+    if (!account.access_token) {
+      throw new Error('Instagram アクセストークンが設定されていません')
+    }
+    if (!account.instagram_user_id) {
+      throw new Error('Instagram ビジネスアカウント ID が未取得です。再連携してください')
+    }
+    if (!video.final_video_url) {
+      throw new Error('動画ファイルが生成されていません')
+    }
+    // Graph API は video_url を自分でフェッチするため公開アクセス可能な https URL が必要
+    assertFetchableVideoUrl(video.final_video_url)
+  },
+  async publish({ video, account, options }) {
+    if (!video.final_video_url) {
+      throw new Error('動画ファイルが生成されていません')
+    }
+    if (!account.instagram_user_id) {
+      throw new Error('Instagram ビジネスアカウント ID が未取得です')
+    }
+    // validate() を通過していても TS は narrowing を失うので明示 null guard
+    if (!account.access_token) {
+      throw new Error('Instagram access_token が空です')
+    }
+    const extras = options?._instagramExtras
+    const result = await createInstagramReelPost(
+      {
+        accessToken: account.access_token,
+        igUserId: account.instagram_user_id,
+      },
+      {
+        caption: buildInstagramReelCaption(video),
+        videoUrl: video.final_video_url,
+        // shareToFeed のデフォルトはここ (publisher 層) で 1 回だけ解決する
+        shareToFeed: options?.instagramShareToFeed ?? true,
+        onContainerCreated: extras?.onContainerCreated,
+      },
+    )
+    return {
+      platformPublishId: result.mediaId,
+      intermediateId: result.containerId,
+    }
+  },
+}
+
 export const videoPublishers: Partial<Record<VideoPlatform, VideoPublisher>> = {
   youtube: youtubePublisher,
   tiktok: tiktokVideoPublisher,
+  instagram: instagramReelsPublisher,
 }
 
 function isVideoAuthError(e: unknown): boolean {
-  return e instanceof YouTubeAuthError || e instanceof TikTokAuthError
+  return (
+    e instanceof YouTubeAuthError ||
+    e instanceof TikTokAuthError ||
+    e instanceof InstagramAuthError
+  )
 }
 
 function asVideoPlatform(platform: Platform): VideoPlatform | null {
-  return platform === 'tiktok' || platform === 'youtube' ? platform : null
+  if (platform === 'tiktok' || platform === 'youtube' || platform === 'instagram') {
+    return platform
+  }
+  return null
 }
 
 /**
@@ -664,6 +804,16 @@ export async function publishVideo(ctx: VideoPublishContext): Promise<VideoPubli
       const next = await refreshTikTokAccountToken(ctx.account)
       if (!next) {
         throw new Error('TikTok のアクセストークン更新に失敗しました。再連携してください')
+      }
+      return publisher.publish({ ...ctx, account: next })
+    }
+
+    if (platform === 'instagram') {
+      // Instagram long-lived token (60日) を refresh エンドポイントで rotate して
+      // 1 回だけ retry する。refresh 失敗時は再連携を促す。
+      const next = await refreshInstagramAccountToken(ctx.account)
+      if (!next) {
+        throw new Error('Instagram のアクセストークン更新に失敗しました。再連携してください')
       }
       return publisher.publish({ ...ctx, account: next })
     }

@@ -28,13 +28,13 @@ export default async function VideoDetailPage({ params }: VideoDetailPageProps) 
 
   const video: VideoWithScenes = { ...videoRow, scenes }
 
-  // TikTok / YouTube アカウントのみを取得（公開対象）
+  // TikTok / YouTube / Instagram (Reels) アカウントを取得（公開対象）
   // accounts テーブルは機密カラムを含むので、サーバー側で必要な公開可能カラムのみを返す
   const { data: accountRows } = await supabase
     .from('accounts')
     .select('*')
     .eq('user_id', user.id)
-    .in('platform', ['tiktok', 'youtube'])
+    .in('platform', ['tiktok', 'youtube', 'instagram'])
     .eq('is_active', true)
     .order('name', { ascending: true })
 

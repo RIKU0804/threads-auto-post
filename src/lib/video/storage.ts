@@ -75,6 +75,12 @@ function finalVideoPath({ userId, videoId }: PathParts): string {
   return `${userId}/${videoId}/final.mp4`
 }
 
+function videoVoicePath({ userId, videoId }: PathParts): string {
+  assertId(userId, 'userId')
+  assertId(videoId, 'videoId')
+  return `${userId}/${videoId}/voice.mp3`
+}
+
 interface UploadOutcome {
   storagePath: string
   signedUrl: string
@@ -169,6 +175,28 @@ export async function uploadFinalVideo(
 ): Promise<UploadOutcome> {
   const path = finalVideoPath({ userId: opts.userId, videoId: opts.videoId })
   return uploadBytes(path, opts.mp4Bytes, 'video/mp4', FINAL_VIDEO_EXPIRES_SEC)
+}
+
+export interface UploadVideoVoiceOptions {
+  userId: string
+  videoId: string
+  bytes: Uint8Array
+  mimeType: string
+}
+
+/**
+ * HeyGen など「動画全体に紐づく単一ナレーション」用のアップロードヘルパー。
+ * シーン単位の音声 (scenes/{order}.mp3) とは別経路で
+ * `{userId}/{videoId}/voice.mp3` に格納する。
+ *
+ * 戻り値の signedUrl は HeyGen に渡せるよう長めの有効期限 (= FINAL_VIDEO_EXPIRES_SEC = 7d)
+ * を採用。videos.voice_url に永続化することで、レジューム時に再生成を回避する。
+ */
+export async function uploadVideoVoice(
+  opts: UploadVideoVoiceOptions,
+): Promise<UploadOutcome> {
+  const path = videoVoicePath({ userId: opts.userId, videoId: opts.videoId })
+  return uploadBytes(path, opts.bytes, opts.mimeType, FINAL_VIDEO_EXPIRES_SEC)
 }
 
 /**

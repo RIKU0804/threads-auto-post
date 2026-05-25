@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation'
 import { Video as VideoIcon, Copy } from 'lucide-react'
 import { Card } from '@/components/ui/Card'
 import { VideoStatusBadge } from './VideoStatusBadge'
-import type { Video } from '@/types/database'
+import type { GenerationMode, Video } from '@/types/database'
 
 interface VideoCardData extends Video {
   scenes?: { count: number }[] | { count: number } | null
@@ -25,6 +25,11 @@ function getSceneCount(scenes: VideoCardData['scenes']): number {
   return scenes.count ?? 0
 }
 
+const MODE_CHIP: Record<GenerationMode, { label: string; cls: string }> = {
+  heygen_avatar: { label: 'AIアバター', cls: 'bg-purple-50 text-purple-700' },
+  remotion: { label: 'シーン合成', cls: 'bg-gray-100 text-gray-600' },
+}
+
 interface VideoCardProps {
   video: VideoCardData
 }
@@ -32,6 +37,7 @@ interface VideoCardProps {
 export function VideoCard({ video }: VideoCardProps) {
   const router = useRouter()
   const sceneCount = getSceneCount(video.scenes)
+  const modeChip = MODE_CHIP[video.generation_mode] ?? MODE_CHIP.remotion
 
   function handleDuplicate(e: React.MouseEvent) {
     e.preventDefault()
@@ -52,7 +58,15 @@ export function VideoCard({ video }: VideoCardProps) {
           )}
         </div>
         <div className="space-y-2 p-4">
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span
+              className={
+                'inline-flex items-center rounded-full px-1.5 py-0.5 text-[10px] font-medium ' +
+                modeChip.cls
+              }
+            >
+              {modeChip.label}
+            </span>
             <VideoStatusBadge status={video.status} />
             <span className="text-[11px] text-gray-400">{sceneCount} シーン</span>
           </div>

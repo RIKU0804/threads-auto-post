@@ -6,34 +6,54 @@ import OpenAI from 'openai'
 import { createAdminClient } from '@/lib/supabase-admin'
 import { decryptSecret } from '@/lib/crypto'
 import { MissingApiKeyError } from '@/lib/ai/api-keys'
-import type { Scene, Video, VideoStatus } from '@/types/database'
-import { generateVideoScript } from '@/lib/video/script'
-import { generateSceneNarration } from '@/lib/video/elevenlabs'
+import type { GenerationMode, Scene, Video, VideoStatus } from '@/types/database'
+import { generateVideoScript, type SceneDraft } from '@/lib/video/script'
+import { generateFullNarration, generateSceneNarration } from '@/lib/video/elevenlabs'
+import {
+  generateAvatarVideo,
+  pollUntilComplete,
+  type HeyGenVoiceInput,
+} from '@/lib/video/heygen'
 import {
   getSignedUrl,
   uploadFinalVideo,
   uploadSceneAudio,
   uploadSceneImage,
+  uploadVideoVoice,
 } from '@/lib/video/storage'
+import { assertFetchableVideoUrl } from '@/lib/platforms/publishers'
 
 /**
  * 動画生成パイプラインのオーケストレーター。
  *
- * フェーズ:
- *   draft
- *     → generating_script   (script.ts で台本生成、scenes 行を挿入)
- *     → generating_images   (各シーンの画像を gpt-image-2 で生成)
- *     → generating_voice    (各シーンの音声を ElevenLabs で生成)
- *     → rendering           (Remotion で MP4 レンダリング)
- *     → ready               (完成)
+ * generation_mode で 2 系統に分岐する:
+ *
+ * 1) 'remotion' (デフォルト)
+ *    draft
+ *      → generating_script   (script.ts で台本生成、scenes 行を挿入)
+ *      → generating_images   (各シーンの画像を gpt-image-2 で生成)
+ *      → generating_voice    (各シーンの音声を ElevenLabs で生成)
+ *      → rendering           (Remotion で MP4 レンダリング)
+ *      → ready               (完成)
+ *
+ * 2) 'heygen_avatar'
+ *    draft
+ *      → generating_script   (連続ナレーション 1 本ぶんを生成、scenes 行は作らない)
+ *      → generating_voice    (voice_source='elevenlabs' のときのみ。
+ *                             voice_source='heygen' のときは HeyGen 内蔵 TTS を使うので
+ *                             この遷移は省略され、generating_script から直接 rendering へ進む)
+ *      → rendering           (HeyGen アバター動画ジョブを投入 → ポーリング)
+ *      → ready               (HeyGen から MP4 をダウンロードして Supabase Storage に再アップロード)
+ *
+ *    HeyGen 経路は scenes/画像を持たないため generating_images フェーズはスキップする。
  *
  * いずれの段階でも uncatchable error は failed に遷移し、
  * videos.error_message にメッセージを書き込む。
  *
  * 各 step は idempotent:
- *   - 画像生成は image_url が空のシーンのみ対象
- *   - 音声生成は audio_url が空のシーンのみ対象
- *   - レンダーは final_video_url が空の場合のみ実行
+ *   - Remotion: 画像/音声は url が空のシーンのみ、レンダーは final_video_url が空のときのみ
+ *   - HeyGen  : script / voice_url / heygen_video_id / final_video_url を順に永続化し、
+ *               レジューム時はそれぞれが揃っているフェーズから再開する
  */
 
 // gpt-image-2 に統一（src/lib/ai/image.ts と同じモデル）
@@ -187,19 +207,57 @@ async function fetchOpenAiKey(userId: string): Promise<string> {
 // Step 1: script
 // ---------------------------------------------------------------------------
 
+interface EnsureScriptOptions {
+  sceneCount?: number | null
+  targetDurationSec?: number | null
+  /** 'remotion' のとき scenes 行を作る。'heygen_avatar' は scenes を作らず script 文字列だけ返す */
+  mode: GenerationMode
+}
+
+interface EnsureScriptResult {
+  script: string
+  /** Remotion 経路では新規 / 既存の scenes を返す。HeyGen 経路では空配列。 */
+  scenes: SceneDraft[]
+}
+
 /**
- * テーマから台本を生成し、videos.script と scenes 行を埋める。
- * scenes がすでに存在する場合はスキップ (idempotent)。
+ * 台本を idempotent に生成 / 復元する内部ヘルパー。
+ *
+ * - videos.script が既にあれば再生成しない（status も更新しない）
+ *   - Remotion 経路では scenes 行も既に挿入済みである前提だが、念のため空でも続行する
+ *   - HeyGen 経路では scenes 行は使わないため、保存済み script をそのまま返すだけで OK
+ * - 未生成なら videos.status を 'generating_script' にして
+ *   generateVideoScript() を呼び、結果を永続化する
+ *
+ * Remotion / HeyGen の両方からこのヘルパーを呼ぶ。Remotion 経路の生成元は
+ * `generateScript()`、HeyGen 経路の生成元は `runHeyGenPipeline()`。
  */
-export async function generateScript(
+async function ensureScript(
   videoId: string,
+  video: Pick<Video, 'script' | 'title' | 'user_id'>,
   theme: string,
-  opts: { sceneCount?: number | null; targetDurationSec?: number | null } = {},
-): Promise<void> {
-  const video = await loadVideo(videoId)
-  const existingScenes = await loadScenes(videoId)
-  if (existingScenes.length > 0 && video.script) {
-    return // 既に生成済み
+  opts: EnsureScriptOptions,
+): Promise<EnsureScriptResult> {
+  // 既に生成済み → そのまま返す。status 更新もしない（idempotent）。
+  // ただし Remotion 経路で「script はあるが scenes が無い」状態は壊れているので再生成する
+  // (元の generateScript と同じ判定)。
+  if (video.script && video.script.trim().length > 0) {
+    if (opts.mode === 'remotion') {
+      const existing = await loadScenes(videoId)
+      if (existing.length > 0) {
+        const drafts: SceneDraft[] = existing.map((s) => ({
+          caption_text: s.caption_text ?? '',
+          narration_text: s.narration_text ?? '',
+          image_prompt: s.image_prompt ?? '',
+          duration: typeof s.duration === 'number' ? s.duration : 3,
+        }))
+        return { script: video.script, scenes: drafts }
+      }
+      // scenes が無い → 下に落ちて再生成
+    } else {
+      // HeyGen 経路: scenes は使わないので script だけ揃っていれば OK
+      return { script: video.script, scenes: [] }
+    }
   }
 
   await updateVideoStatus(videoId, 'generating_script')
@@ -213,7 +271,7 @@ export async function generateScript(
   const draft = await generateVideoScript(scriptOpts, { userId: video.user_id })
 
   const supabase = createAdminClient()
-  // タイトル / 台本を反映 (videos.title が空の場合のみ更新)
+  // タイトル / 台本を反映 (videos.title が "Untitled" の場合のみ更新)
   const videoUpdate: Record<string, unknown> = {
     script: draft.script,
   }
@@ -228,26 +286,46 @@ export async function generateScript(
     throw new PipelineError(`videos の台本反映に失敗: ${videoErr.message}`, videoErr)
   }
 
-  // 既存 scenes をクリアして再生成。
-  if (existingScenes.length > 0) {
+  // Remotion 経路のときだけ scenes 行を挿入する。
+  if (opts.mode === 'remotion') {
+    // 既存 scenes をクリアしてから再生成（script が空だった = 整合性を取り直す）
     const { error: delErr } = await supabase.from('scenes').delete().eq('video_id', videoId)
     if (delErr) {
       throw new PipelineError(`既存 scenes の削除に失敗: ${delErr.message}`, delErr)
     }
+    const rows = draft.scenes.map((s, idx) => ({
+      video_id: videoId,
+      order_index: idx,
+      caption_text: s.caption_text,
+      narration_text: s.narration_text,
+      image_prompt: s.image_prompt,
+      duration: s.duration,
+    }))
+    const { error: insErr } = await supabase.from('scenes').insert(rows)
+    if (insErr) {
+      throw new PipelineError(`scenes の挿入に失敗: ${insErr.message}`, insErr)
+    }
   }
 
-  const rows = draft.scenes.map((s, idx) => ({
-    video_id: videoId,
-    order_index: idx,
-    caption_text: s.caption_text,
-    narration_text: s.narration_text,
-    image_prompt: s.image_prompt,
-    duration: s.duration,
-  }))
-  const { error: insErr } = await supabase.from('scenes').insert(rows)
-  if (insErr) {
-    throw new PipelineError(`scenes の挿入に失敗: ${insErr.message}`, insErr)
+  return { script: draft.script, scenes: draft.scenes }
+}
+
+/**
+ * テーマから台本を生成し、videos.script と scenes 行を埋める (Remotion 経路用)。
+ * scenes がすでに存在する場合はスキップ (idempotent)。
+ */
+export async function generateScript(
+  videoId: string,
+  theme: string,
+  opts: { sceneCount?: number | null; targetDurationSec?: number | null } = {},
+): Promise<void> {
+  const video = await loadVideo(videoId)
+  const ensureOpts: EnsureScriptOptions = { mode: 'remotion' }
+  if (typeof opts.sceneCount === 'number') ensureOpts.sceneCount = opts.sceneCount
+  if (typeof opts.targetDurationSec === 'number') {
+    ensureOpts.targetDurationSec = opts.targetDurationSec
   }
+  await ensureScript(videoId, video, theme, ensureOpts)
 }
 
 // ---------------------------------------------------------------------------
@@ -589,6 +667,14 @@ export async function runVideoPipeline(
     // 既に終了している場合は何もしない
     if (video.status === 'ready') return
 
+    // generation_mode で分岐。
+    // - 'remotion'      : 既存の Script → Images → Voice → Render フロー
+    // - 'heygen_avatar' : Script → Voice(任意) → HeyGen レンダリング
+    if (video.generation_mode === 'heygen_avatar') {
+      await runHeyGenPipeline(video, opts)
+      return
+    }
+
     // script を必要としているか判定。
     // theme カラムは videos に無いため、ジョブ起動側で渡してもらう。
     // 未指定なら videos.title をテーマ代わりに使う (route が title=theme.slice(0,80) を入れる想定)。
@@ -613,6 +699,363 @@ export async function runVideoPipeline(
     // ジョブ実行コンテキストでは throw しても上流が拾えないため、ここで終了。
     return
   }
+}
+
+// ---------------------------------------------------------------------------
+// HeyGen avatar pipeline
+// ---------------------------------------------------------------------------
+
+/**
+ * HeyGen ダウンロード時の上限。HeyGen の出力は通常 数十MB だが、
+ * 念のため 200MB を超えるレスポンスは「異常」として弾く。
+ */
+const HEYGEN_DOWNLOAD_MAX_BYTES = 200 * 1024 * 1024
+
+/**
+ * HeyGen のステータスポーリング設定。
+ *   - intervalMs: API レート (~10/min) に収まる粒度
+ *   - timeoutMs : 15分。HeyGen は通常数分で完成するが、混雑時の安全策。
+ */
+const HEYGEN_POLL_INTERVAL_MS = 10_000
+const HEYGEN_POLL_TIMEOUT_MS = 15 * 60_000
+
+const HEYGEN_OUTPUT_DIMENSION = { width: 1080, height: 1920 } as const
+
+/**
+ * Supabase signed URL の `token` クエリパラメータから JWT exp を取り出して
+ * 期限切れか判定する。デコード不能 / exp 不在のときは「期限切れ扱い」にして
+ * 安全側に倒す (= 再生成する)。
+ *
+ * Node の Buffer を使った base64url デコード。失敗しても throw しない。
+ */
+function isSignedUrlExpired(signedUrl: string, skewMs = 60_000): boolean {
+  try {
+    const u = new URL(signedUrl)
+    const token = u.searchParams.get('token')
+    if (!token) return true
+    const parts = token.split('.')
+    if (parts.length < 2) return true
+    const payloadB64 = parts[1].replace(/-/g, '+').replace(/_/g, '/')
+    const payload = JSON.parse(Buffer.from(payloadB64, 'base64').toString('utf-8')) as {
+      exp?: number
+    }
+    if (typeof payload.exp !== 'number') return true
+    // exp は秒単位、Date.now() は ms 単位。skew (= 60秒) のマージンを取る。
+    return payload.exp * 1000 <= Date.now() + skewMs
+  } catch {
+    return true
+  }
+}
+
+/**
+ * Step A: HeyGen 用の voice 入力を用意する。
+ *
+ * voice_source ごとの分岐:
+ *   - 'elevenlabs':
+ *       videos.voice_url が有効な signed URL ならそれを再利用 (status 更新もしない)。
+ *       無効 or 未設定なら ElevenLabs で合成 → Storage にアップロード → voice_url を永続化。
+ *       このとき videos.status を 'generating_voice' に遷移させる。
+ *   - 'heygen':
+ *       HeyGen 内蔵 TTS を使うため ElevenLabs 合成は不要。
+ *       generating_voice 状態には遷移しない (script → rendering 直行)。
+ */
+async function ensureHeyGenVoice(
+  video: Video,
+  scriptText: string,
+): Promise<HeyGenVoiceInput> {
+  if (video.voice_source === 'heygen') {
+    if (!video.heygen_voice_id) {
+      throw new PipelineError('voice_source=heygen には heygen_voice_id が必要です')
+    }
+    return {
+      type: 'text',
+      voiceId: video.heygen_voice_id,
+      inputText: scriptText,
+    }
+  }
+
+  if (video.voice_source !== 'elevenlabs') {
+    throw new PipelineError(`未知の voice_source: ${String(video.voice_source)}`)
+  }
+
+  // ElevenLabs 経路: voice_url を再利用できるなら再合成しない
+  if (video.voice_url && !isSignedUrlExpired(video.voice_url)) {
+    return { type: 'audio', audioUrl: video.voice_url }
+  }
+
+  // 未生成 or 期限切れ → 合成してアップロード
+  await updateVideoStatus(video.id, 'generating_voice')
+
+  const narrationRes = await generateFullNarration([scriptText], {}, video.user_id)
+  const uploaded = await uploadVideoVoice({
+    userId: video.user_id,
+    videoId: video.id,
+    bytes: narrationRes.audioBytes,
+    mimeType: narrationRes.mimeType,
+  })
+
+  // signedUrl を永続化 (final_video_url と同じ運用)。次回レジューム時に再利用する。
+  const supabase = createAdminClient()
+  const { error } = await supabase
+    .from('videos')
+    .update({ voice_url: uploaded.signedUrl })
+    .eq('id', video.id)
+  if (error) {
+    throw new PipelineError(`videos.voice_url の保存に失敗: ${error.message}`, error)
+  }
+
+  return { type: 'audio', audioUrl: uploaded.signedUrl }
+}
+
+/**
+ * Step B: HeyGen 動画ジョブを投入する (または既存ジョブの id を返す)。
+ *
+ * videos.heygen_video_id が既にセットされていればジョブ再投入はせず、その id を返す。
+ * 新規投入時は generated id を即座に DB に永続化してから返す
+ * (ジョブが進行中にクラッシュしても再開できるように)。
+ */
+async function ensureHeyGenJob(
+  video: Video,
+  voice: HeyGenVoiceInput,
+): Promise<string> {
+  if (video.heygen_video_id) {
+    return video.heygen_video_id
+  }
+
+  if (!video.heygen_avatar_id) {
+    throw new PipelineError('HeyGen 動画には heygen_avatar_id の指定が必要です')
+  }
+
+  const { videoId: heygenVideoId } = await generateAvatarVideo({
+    userId: video.user_id,
+    avatarId: video.heygen_avatar_id,
+    dimension: HEYGEN_OUTPUT_DIMENSION,
+    voice,
+  })
+
+  // 後で再ポーリングできるよう video_id を即座に永続化。
+  const supabase = createAdminClient()
+  const { error } = await supabase
+    .from('videos')
+    .update({ heygen_video_id: heygenVideoId })
+    .eq('id', video.id)
+  if (error) {
+    throw new PipelineError(`heygen_video_id の保存に失敗: ${error.message}`, error)
+  }
+  return heygenVideoId
+}
+
+/**
+ * Step C: HeyGen ジョブをポーリングし、完成 MP4 を取り込んで Storage に再アップロード、
+ * videos.status を 'ready' に遷移させる。
+ */
+async function finalizeHeyGenOutput(
+  video: Video,
+  heygenVideoId: string,
+): Promise<void> {
+  const completed = await pollUntilComplete(video.user_id, heygenVideoId, {
+    intervalMs: HEYGEN_POLL_INTERVAL_MS,
+    timeoutMs: HEYGEN_POLL_TIMEOUT_MS,
+  })
+  if (!completed.videoUrl) {
+    throw new PipelineError('HeyGen から動画 URL が返りませんでした')
+  }
+
+  const mp4Bytes = await downloadHeyGenVideo(completed.videoUrl)
+  const uploaded = await uploadFinalVideo({
+    userId: video.user_id,
+    videoId: video.id,
+    mp4Bytes,
+  })
+
+  await updateVideoStatus(video.id, 'ready', {
+    final_video_url: uploaded.signedUrl,
+    published_to: [],
+    publish_status: 'unpublished',
+    error_message: null,
+  })
+}
+
+/**
+ * HeyGen アバター動画パイプライン（オーケストレーター）。
+ *
+ * Remotion 経路と異なり scenes 行は作らない (連続ナレーション 1 本)。
+ * フェーズ:
+ *   generating_script → (generating_voice : voice_source='elevenlabs' のときのみ) → rendering → ready
+ *
+ * voice_source:
+ *   - 'elevenlabs' : ElevenLabs で MP3 を生成し、署名付き URL を HeyGen に渡す
+ *                    (videos.voice_url に永続化して再開時に再利用する)
+ *   - 'heygen'     : HeyGen 内蔵 TTS を使う (heygen_voice_id 必須)
+ *
+ * 各ステップは idempotent:
+ *   - script は videos.script があれば再生成しない
+ *   - voice は videos.voice_url が有効ならそのまま使う
+ *   - HeyGen ジョブは videos.heygen_video_id があれば再投入せず再ポーリングする
+ *   - 最終 MP4 は videos.final_video_url があればスキップして ready 化のみ行う
+ */
+async function runHeyGenPipeline(
+  video: Video,
+  opts: PipelineRunOptions,
+): Promise<void> {
+  const videoId = video.id
+
+  // 既に最終 MP4 が出ているケースの defensive guard
+  // (restartFailedVideo + reentrant な resume を想定)
+  if (video.final_video_url) {
+    await updateVideoStatus(videoId, 'ready', { error_message: null })
+    return
+  }
+
+  // 必須パラメータ事前検証
+  if (!video.voice_source) {
+    throw new PipelineError('HeyGen 動画には voice_source の指定が必要です')
+  }
+  if (!video.heygen_avatar_id) {
+    throw new PipelineError('HeyGen 動画には heygen_avatar_id の指定が必要です')
+  }
+
+  // --- Step 1: script -------------------------------------------------
+  const theme = (opts.theme?.trim() || video.title?.trim() || '').trim()
+  if (!video.script && !theme) {
+    throw new PipelineError('theme も videos.title も空のため script を生成できません')
+  }
+  const ensureOpts: EnsureScriptOptions = { mode: 'heygen_avatar' }
+  if (typeof opts.sceneCount === 'number') ensureOpts.sceneCount = opts.sceneCount
+  if (typeof opts.targetDurationSec === 'number') {
+    ensureOpts.targetDurationSec = opts.targetDurationSec
+  }
+  const ensured = await ensureScript(videoId, video, theme, ensureOpts)
+  let scriptText = ensured.script.trim()
+
+  // HeyGen は連続ナレーション 1 本。新規生成時は scenes[].narration_text を結合した方が
+  // 自然なナレーションになるので、scenes ドラフトがあれば優先する。
+  if (ensured.scenes.length > 0) {
+    const joined = ensured.scenes
+      .map((s) => s.narration_text?.trim() ?? '')
+      .filter((s) => s.length > 0)
+      .join('\n\n')
+    if (joined.length > 0) {
+      scriptText = joined
+    }
+  }
+  if (!scriptText) {
+    throw new PipelineError('生成された script が空です')
+  }
+
+  // 最新の video 行を取得し直す (ensureScript が title / script を更新している可能性あり)
+  const refreshed = await loadVideo(videoId)
+
+  // --- Step 2: voice --------------------------------------------------
+  const voice = await ensureHeyGenVoice(refreshed, scriptText)
+
+  // --- Step 3: HeyGen ジョブ投入 (or 既存ジョブ id を回収) -----------
+  await updateVideoStatus(videoId, 'rendering')
+  // ensureHeyGenJob は最新の video を見たいので、voice_url 更新後の状態を再取得
+  const refreshedForJob = await loadVideo(videoId)
+  const heygenVideoId = await ensureHeyGenJob(refreshedForJob, voice)
+
+  // --- Step 4: ポーリング → ダウンロード → Storage 保存 → ready ------
+  await finalizeHeyGenOutput(refreshedForJob, heygenVideoId)
+}
+
+/**
+ * HeyGen が返した公開 MP4 URL を fetch してバイト列を取り出す。
+ *
+ * セキュリティ / 安定性のための多層防御:
+ *   - assertFetchableVideoUrl: https 限定 + ループバック / RFC1918 / リンクローカル拒否
+ *   - redirect: 'manual'      : リダイレクト経由の SSRF 迂回を遮断
+ *   - AbortSignal.timeout     : ボディダウンロードに 2 分の上限
+ *   - Content-Type 検証       : video/* 以外は拒否（body 読む前に判定）
+ *   - ストリーミングでサイズ加算  : 200MB 上限を超えた瞬間に reader.cancel() して
+ *                                 メモリを確保せず early abort
+ *   (publishers.ts:fetchVideoBytesSafe と同じパターン)
+ */
+async function downloadHeyGenVideo(videoUrl: string): Promise<Uint8Array> {
+  assertFetchableVideoUrl(videoUrl)
+
+  let res: Response
+  try {
+    res = await fetch(videoUrl, {
+      redirect: 'manual',
+      signal: AbortSignal.timeout(120_000),
+    })
+  } catch (e: unknown) {
+    const message = e instanceof Error ? e.message : 'unknown fetch error'
+    throw new PipelineError(`HeyGen 動画のダウンロードに失敗しました: ${message}`, e)
+  }
+
+  if (res.type === 'opaqueredirect') {
+    throw new PipelineError('HeyGen 動画 URL がリダイレクトを返しました（許可されていません）')
+  }
+  if (!res.ok) {
+    throw new PipelineError(`HeyGen 動画のダウンロードに失敗しました (HTTP ${res.status})`)
+  }
+
+  // Content-Type は body 読む前に判定
+  const contentType = (res.headers.get('content-type') ?? '').split(';')[0].trim().toLowerCase()
+  if (!contentType.startsWith('video/')) {
+    throw new PipelineError(`HeyGen 動画の Content-Type が不正です: ${contentType || 'unknown'}`)
+  }
+
+  // Content-Length が事前に上限超えを宣言していたら即拒否 (body 読まない)
+  const contentLengthHeader = res.headers.get('content-length')
+  if (contentLengthHeader) {
+    const declared = Number(contentLengthHeader)
+    if (Number.isFinite(declared) && declared > HEYGEN_DOWNLOAD_MAX_BYTES) {
+      throw new PipelineError(
+        `HeyGen 動画のサイズが上限を超えています: ${declared} bytes`,
+      )
+    }
+  }
+
+  // body 不在のフォールバック (Node fetch では実質到達しない)
+  if (!res.body) {
+    const buf = await res.arrayBuffer()
+    if (buf.byteLength === 0) {
+      throw new PipelineError('HeyGen 動画のレスポンスが空でした')
+    }
+    if (buf.byteLength > HEYGEN_DOWNLOAD_MAX_BYTES) {
+      throw new PipelineError(
+        `HeyGen 動画のサイズが上限を超えています: ${buf.byteLength} bytes`,
+      )
+    }
+    return new Uint8Array(buf)
+  }
+
+  // ストリーミング: チャンク単位でサイズチェック → 超過したら abort
+  const reader = res.body.getReader()
+  const chunks: Uint8Array[] = []
+  let received = 0
+  try {
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      if (!value) continue
+      received += value.byteLength
+      if (received > HEYGEN_DOWNLOAD_MAX_BYTES) {
+        await reader.cancel('size limit exceeded').catch(() => undefined)
+        throw new PipelineError(
+          `HeyGen 動画のサイズが上限を超えています: ${received} bytes`,
+        )
+      }
+      chunks.push(value)
+    }
+  } finally {
+    try { reader.releaseLock() } catch { /* noop */ }
+  }
+
+  if (received === 0) {
+    throw new PipelineError('HeyGen 動画のレスポンスが空でした')
+  }
+
+  const bytes = new Uint8Array(received)
+  let offset = 0
+  for (const c of chunks) {
+    bytes.set(c, offset)
+    offset += c.byteLength
+  }
+  return bytes
 }
 
 // ---------------------------------------------------------------------------

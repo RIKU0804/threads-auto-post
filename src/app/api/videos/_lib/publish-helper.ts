@@ -4,10 +4,16 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import { publishVideo, type VideoPublishOptions as PublisherOptions } from '@/lib/platforms/publishers'
 import type { Account, Platform, Video } from '@/types/database'
 
+/**
+ * 公開処理中ロック (publish_status='publishing') が古すぎる場合は再投稿を許可するための閾値。
+ * Vercel Functions の最大実行時間 (約 300 秒) + バッファ。
+ */
+const STALE_PUBLISHING_LOCK_MS = 10 * 60 * 1000
+
 interface VideoPublishOptions {
   videoId: string
   accountId: string
-  platform: 'tiktok' | 'youtube'
+  platform: 'tiktok' | 'youtube' | 'instagram'
   userId: string
   supabase: SupabaseClient
   /** プラットフォーム固有メタデータ。caption/privacy 等の上書き用 */
@@ -75,7 +81,10 @@ export async function publishVideoToAccount({
     return NextResponse.json({ error: '指定された ' + platform + ' アカウントが見つかりません' }, { status: 404 })
   }
 
-  // 二重投稿防止: publish_status='publishing' へ遷移できる条件下のみ進む
+  // 二重投稿防止: publish_status='publishing' へ遷移できる条件下のみ進む。
+  // 通常は 'unpublished' / 'publish_failed' のみ許可するが、前回が Vercel タイムアウト
+  // などで死んだ場合 'publishing' が永久に残るため、十分古ければ stale lock として
+  // 上書きを許可する。.or() 構文は本コードベースで未使用なので 2 段階の二択で実装する。
   const { data: locked, error: lockErr } = await supabase
     .from('videos')
     .update({ publish_status: 'publishing', account_id: accountId })
@@ -85,7 +94,26 @@ export async function publishVideoToAccount({
     .maybeSingle()
 
   if (lockErr) throw lockErr
-  if (!locked) {
+
+  let acquired = !!locked
+  if (!acquired) {
+    // 既存 'publishing' が STALE_PUBLISHING_LOCK_MS より古ければ takeover を試みる
+    const cutoffIso = new Date(Date.now() - STALE_PUBLISHING_LOCK_MS).toISOString()
+    const { data: takeover, error: takeoverErr } = await supabase
+      .from('videos')
+      .update({ publish_status: 'publishing', account_id: accountId })
+      .eq('id', videoId)
+      .eq('publish_status', 'publishing')
+      .lt('updated_at', cutoffIso)
+      .select('id')
+      .maybeSingle()
+    if (takeoverErr) throw takeoverErr
+    acquired = !!takeover
+    if (acquired) {
+      console.error('[videos/publish]', platform, videoId, 'stale_lock_takeover')
+    }
+  }
+  if (!acquired) {
     return NextResponse.json(
       { error: 'この動画は既に公開処理中または公開済みです' },
       { status: 409 },
@@ -97,10 +125,39 @@ export async function publishVideoToAccount({
     const effectiveVideo: Video = captionOverride
       ? { ...v, title: captionOverride }
       : v
+
+    // Instagram Reels はコンテナ作成と公開メディア確定が分かれているため、
+    // コンテナ ID をまず instagram_reel_id に書き残しておき、その後 publish 成功時に
+    // 最終 media ID で上書きする。途中で死んでも漏れた container は ID で追跡できる。
+    const mergedOptions: PublisherOptions = {
+      ...(publisherOptions ?? {}),
+      ...(platform === 'instagram'
+        ? {
+            _instagramExtras: {
+              onContainerCreated: async (containerId: string) => {
+                try {
+                  await supabase
+                    .from('videos')
+                    .update({ instagram_reel_id: containerId })
+                    .eq('id', videoId)
+                } catch (e) {
+                  // 永続化失敗は publish 自体を止めない。status のみログ。
+                  console.error(
+                    '[videos/publish] container_id persist failed',
+                    videoId,
+                    e instanceof Error ? e.name : 'unknown',
+                  )
+                }
+              },
+            },
+          }
+        : {}),
+    }
+
     const result = await publishVideo({
       video: effectiveVideo,
       account: account as Account,
-      options: publisherOptions,
+      options: mergedOptions,
     })
 
     const publishedTo = Array.isArray(v.published_to) ? [...v.published_to] : []
@@ -118,6 +175,10 @@ export async function publishVideoToAccount({
     }
     if (platform === 'youtube' && result.platformPublishId) {
       updates.youtube_video_id = result.platformPublishId
+    }
+    if (platform === 'instagram' && result.platformPublishId) {
+      // onContainerCreated で書いた containerId を最終 mediaId で上書き
+      updates.instagram_reel_id = result.platformPublishId
     }
 
     await supabase.from('videos').update(updates).eq('id', videoId)

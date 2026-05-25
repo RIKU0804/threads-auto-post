@@ -46,6 +46,8 @@ export async function checkRateLimit(
 
 /** プリセット（generate はコスト保護のため fail-closed） */
 export const RATE_LIMITS = {
-  generate: { limit: 60, windowSeconds: 3600, failMode: 'closed' as const },
-  apiKeys:  { limit: 20, windowSeconds: 3600, failMode: 'open' as const },
+  generate:     { limit: 60, windowSeconds: 3600, failMode: 'closed' as const },
+  apiKeys:      { limit: 20, windowSeconds: 3600, failMode: 'open' as const },
+  heygenList:   { limit: 30, windowSeconds: 3600, failMode: 'open' as const },
+  publishVideo: { limit: 30, windowSeconds: 3600, failMode: 'open' as const },
 }

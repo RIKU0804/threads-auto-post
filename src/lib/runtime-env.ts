@@ -28,7 +28,7 @@ interface VideoCapability {
 }
 
 const LOCAL_VIDEO_MESSAGE =
-  '動画生成はローカル環境（npm run dev）でのみ実行できます。Remotion レンダリングに Chromium が必要なため、Vercel 上では作成不可です。'
+  '動画生成パイプラインはローカル環境（npm run dev）でのみ実行できます。Remotion は Chromium、HeyGen は最大15分のポーリングを必要とするため、いずれも Vercel Functions の制限を超えます。'
 
 export function isVercelRuntime(): boolean {
   // 強制有効フラグ

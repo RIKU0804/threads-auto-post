@@ -9,8 +9,12 @@ import { Input } from '@/components/ui/Input'
 interface KeysState {
   openrouter_masked: string | null
   openai_masked: string | null
+  elevenlabs_masked: string | null
+  heygen_masked: string | null
   has_openrouter: boolean
   has_openai: boolean
+  has_elevenlabs: boolean
+  has_heygen: boolean
   updated_at: string | null
 }
 
@@ -109,8 +113,12 @@ export default function SettingsPage() {
 
   const [openrouterInput, setOpenrouterInput] = useState('')
   const [openaiInput, setOpenaiInput] = useState('')
+  const [elevenlabsInput, setElevenlabsInput] = useState('')
+  const [heygenInput, setHeygenInput] = useState('')
   const [showOpenrouter, setShowOpenrouter] = useState(false)
   const [showOpenai, setShowOpenai] = useState(false)
+  const [showElevenlabs, setShowElevenlabs] = useState(false)
+  const [showHeygen, setShowHeygen] = useState(false)
 
   useEffect(() => {
     fetch('/api/api-keys')
@@ -125,9 +133,11 @@ export default function SettingsPage() {
     setMsg(null)
     try {
       // 空欄なら undefined を送って既存値を保持、入力があれば trim 後のキーを送る
-      const payload: { openrouterKey?: string; openaiKey?: string } = {}
+      const payload: { openrouterKey?: string; openaiKey?: string; elevenlabsKey?: string; heygenKey?: string } = {}
       if (openrouterInput.trim()) payload.openrouterKey = openrouterInput.trim()
       if (openaiInput.trim()) payload.openaiKey = openaiInput.trim()
+      if (elevenlabsInput.trim()) payload.elevenlabsKey = elevenlabsInput.trim()
+      if (heygenInput.trim()) payload.heygenKey = heygenInput.trim()
 
       if (Object.keys(payload).length === 0) {
         setMsg({ kind: 'error', text: '保存するキーを入力してください' })
@@ -148,6 +158,8 @@ export default function SettingsPage() {
       setKeys(data)
       setOpenrouterInput('')
       setOpenaiInput('')
+      setElevenlabsInput('')
+      setHeygenInput('')
       setMsg({ kind: 'success', text: 'API キーを保存しました' })
       setTimeout(() => setMsg(null), 3000)
     } catch {
@@ -157,12 +169,17 @@ export default function SettingsPage() {
     }
   }
 
-  async function handleClear(provider: 'openrouter' | 'openai') {
-    if (!confirm(`${provider === 'openrouter' ? 'OpenRouter' : 'OpenAI'} のキーを削除しますか？`)) return
+  async function handleClear(provider: 'openrouter' | 'openai' | 'elevenlabs' | 'heygen') {
+    const labels = { openrouter: 'OpenRouter', openai: 'OpenAI', elevenlabs: 'ElevenLabs', heygen: 'HeyGen' } as const
+    if (!confirm(`${labels[provider]} のキーを削除しますか？`)) return
     setSaving(true)
     setMsg(null)
     try {
-      const payload = provider === 'openrouter' ? { openrouterKey: null } : { openaiKey: null }
+      const payload: { openrouterKey?: null; openaiKey?: null; elevenlabsKey?: null; heygenKey?: null } = {}
+      if (provider === 'openrouter') payload.openrouterKey = null
+      if (provider === 'openai') payload.openaiKey = null
+      if (provider === 'elevenlabs') payload.elevenlabsKey = null
+      if (provider === 'heygen') payload.heygenKey = null
       const res = await fetch('/api/api-keys', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
@@ -183,7 +200,7 @@ export default function SettingsPage() {
     }
   }
 
-  const canSave = !!(openrouterInput.trim() || openaiInput.trim())
+  const canSave = !!(openrouterInput.trim() || openaiInput.trim() || elevenlabsInput.trim() || heygenInput.trim())
 
   return (
     <div className="p-6 lg:p-8 max-w-2xl">
@@ -216,32 +233,81 @@ export default function SettingsPage() {
         </div>
       ) : (
         <>
-          <div className="space-y-4">
-            <KeyField
-              label="OpenRouter API キー"
-              description="テキスト生成（Gemini 2.0 Flash）と参考画像分析で使用します"
-              link={{ href: 'https://openrouter.ai/keys', text: 'OpenRouter で発行' }}
-              hasKey={keys?.has_openrouter ?? false}
-              masked={keys?.openrouter_masked ?? null}
-              value={openrouterInput}
-              onChange={setOpenrouterInput}
-              onClear={() => handleClear('openrouter')}
-              show={showOpenrouter}
-              onToggleShow={() => setShowOpenrouter(v => !v)}
-            />
-            <KeyField
-              label="OpenAI API キー"
-              description="画像生成（gpt-image-2）で使用します"
-              link={{ href: 'https://platform.openai.com/api-keys', text: 'OpenAI で発行' }}
-              hasKey={keys?.has_openai ?? false}
-              masked={keys?.openai_masked ?? null}
-              value={openaiInput}
-              onChange={setOpenaiInput}
-              onClear={() => handleClear('openai')}
-              show={showOpenai}
-              onToggleShow={() => setShowOpenai(v => !v)}
-            />
-          </div>
+          <section aria-labelledby="section-text-image">
+            <h2
+              id="section-text-image"
+              className="mb-1 text-xs font-semibold uppercase tracking-wider text-gray-500"
+            >
+              文章・画像生成
+            </h2>
+            <p className="mb-3 text-[11px] text-gray-500">
+              台本テキスト、テーマ提案、シーンごとの画像を作るのに使います。動画生成を使わない場合でも投稿文生成にはこの 2 つが必要です。
+            </p>
+            <div className="space-y-4">
+              <KeyField
+                label="OpenRouter API キー"
+                description="テキスト生成（Gemini 2.0 Flash）と参考画像分析で使用します"
+                link={{ href: 'https://openrouter.ai/keys', text: 'OpenRouter で発行' }}
+                hasKey={keys?.has_openrouter ?? false}
+                masked={keys?.openrouter_masked ?? null}
+                value={openrouterInput}
+                onChange={setOpenrouterInput}
+                onClear={() => handleClear('openrouter')}
+                show={showOpenrouter}
+                onToggleShow={() => setShowOpenrouter(v => !v)}
+              />
+              <KeyField
+                label="OpenAI API キー"
+                description="画像生成（gpt-image-2）で使用します"
+                link={{ href: 'https://platform.openai.com/api-keys', text: 'OpenAI で発行' }}
+                hasKey={keys?.has_openai ?? false}
+                masked={keys?.openai_masked ?? null}
+                value={openaiInput}
+                onChange={setOpenaiInput}
+                onClear={() => handleClear('openai')}
+                show={showOpenai}
+                onToggleShow={() => setShowOpenai(v => !v)}
+              />
+            </div>
+          </section>
+
+          <section aria-labelledby="section-video" className="mt-6">
+            <h2
+              id="section-video"
+              className="mb-1 text-xs font-semibold uppercase tracking-wider text-gray-500"
+            >
+              動画生成
+            </h2>
+            <p className="mb-3 text-[11px] text-gray-500">
+              ナレーション音声と AI アバター動画の生成に使います。Remotion 単独で使う場合は ElevenLabs だけでも動作します。HeyGen は AI アバターモード専用です。
+            </p>
+            <div className="space-y-4">
+              <KeyField
+                label="ElevenLabs API キー"
+                description="動画のナレーション音声生成（eleven_v3）で使用します"
+                link={{ href: 'https://elevenlabs.io/app/settings/api-keys', text: 'ElevenLabs で発行' }}
+                hasKey={keys?.has_elevenlabs ?? false}
+                masked={keys?.elevenlabs_masked ?? null}
+                value={elevenlabsInput}
+                onChange={setElevenlabsInput}
+                onClear={() => handleClear('elevenlabs')}
+                show={showElevenlabs}
+                onToggleShow={() => setShowElevenlabs(v => !v)}
+              />
+              <KeyField
+                label="HeyGen API キー"
+                description="AIアバター動画生成（HeyGen v2）で使用します"
+                link={{ href: 'https://app.heygen.com/settings?nav=API', text: 'HeyGen で発行' }}
+                hasKey={keys?.has_heygen ?? false}
+                masked={keys?.heygen_masked ?? null}
+                value={heygenInput}
+                onChange={setHeygenInput}
+                onClear={() => handleClear('heygen')}
+                show={showHeygen}
+                onToggleShow={() => setShowHeygen(v => !v)}
+              />
+            </div>
+          </section>
 
           <div className="mt-6 flex flex-wrap items-center gap-3 border-t border-gray-100 pt-4">
             <Button

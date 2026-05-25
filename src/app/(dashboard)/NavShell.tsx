@@ -30,8 +30,8 @@ interface NavItem {
 
 const navItems: NavItem[] = [
   { href: '/dashboard', label: 'ホーム', icon: LayoutDashboard },
-  { href: '/dashboard/generate', label: '投稿生成', icon: PenLine },
-  { href: '/dashboard/videos', label: '動画', icon: VideoIcon, vercelBadge: 'ローカル' },
+  { href: '/dashboard/generate', label: '文章画像投稿', icon: PenLine },
+  { href: '/dashboard/videos', label: '動画投稿', icon: VideoIcon, vercelBadge: 'ローカル' },
   { href: '/dashboard/drafts', label: '下書き', icon: FileText },
   { href: '/dashboard/accounts', label: 'アカウント', icon: Users },
   { href: '/dashboard/logs', label: 'ログ', icon: ScrollText },

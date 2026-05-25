@@ -13,6 +13,9 @@ export type VideoStatus =
 
 export type PublishStatus = 'unpublished' | 'publishing' | 'published' | 'publish_failed'
 
+export type GenerationMode = 'remotion' | 'heygen_avatar'
+export type VoiceSource = 'elevenlabs' | 'heygen'
+
 export interface Account {
   id: string
   user_id: string
@@ -98,6 +101,7 @@ export interface UserApiKeys {
   openrouter_key: string | null
   openai_key: string | null
   elevenlabs_key: string | null
+  heygen_key: string | null
   updated_at: string
 }
 
@@ -114,6 +118,12 @@ export interface Video {
   published_to: Platform[] | null
   tiktok_publish_id: string | null
   youtube_video_id: string | null
+  instagram_reel_id: string | null
+  generation_mode: GenerationMode
+  voice_source: VoiceSource | null
+  heygen_avatar_id: string | null
+  heygen_voice_id: string | null
+  heygen_video_id: string | null
   published_at: string | null
   error_message: string | null
   created_at: string

@@ -90,49 +90,42 @@ export class ElevenLabsApiError extends Error {
 
 export class MissingElevenLabsKeyError extends Error {
   constructor() {
-    super(
-      'ElevenLabs の API キーが設定されていません。「設定」ページから登録するか、'
-        + 'サーバー側で ELEVENLABS_API_KEY 環境変数を設定してください。',
-    )
+    super('ElevenLabs の API キーが設定されていません。「設定」ページから登録してください。')
     this.name = 'MissingElevenLabsKeyError'
   }
 }
 
 /**
  * 指定ユーザーの ElevenLabs API キーを取得する。
- * 1. `user_api_keys.elevenlabs_key` カラム (DB) — 暗号化済み
- * 2. `process.env.ELEVENLABS_API_KEY` — フォールバック
+ *
+ * BYOK 強制: `user_api_keys.elevenlabs_key` のみを参照する。
+ * サーバー側 `ELEVENLABS_API_KEY` 環境変数フォールバックは廃止 (コストはユーザー負担)。
  *
  * バックグラウンドジョブ (pipeline.ts) から呼ばれるため、セッション cookie
- * に依存せず admin client + userId 明示で取得する。
- * userId 省略時は env フォールバックのみ。
+ * に依存せず admin client + userId 明示で取得する。userId 必須。
  */
-async function fetchElevenLabsKey(userId?: string): Promise<string | null> {
-  if (userId) {
-    try {
-      const admin = createAdminClient()
-      const { data, error } = await admin
-        .from('user_api_keys')
-        .select('elevenlabs_key')
-        .eq('user_id', userId)
-        .maybeSingle()
-      if (!error && data) {
-        const raw = (data as { elevenlabs_key?: string | null }).elevenlabs_key
-        if (typeof raw === 'string') {
-          const decrypted = decryptSecret(raw)?.trim()
-          if (decrypted) return decrypted
-        }
+async function fetchElevenLabsKey(userId: string): Promise<string | null> {
+  try {
+    const admin = createAdminClient()
+    const { data, error } = await admin
+      .from('user_api_keys')
+      .select('elevenlabs_key')
+      .eq('user_id', userId)
+      .maybeSingle()
+    if (!error && data) {
+      const raw = (data as { elevenlabs_key?: string | null }).elevenlabs_key
+      if (typeof raw === 'string') {
+        const decrypted = decryptSecret(raw)?.trim()
+        if (decrypted) return decrypted
       }
-    } catch {
-      // DB 取得失敗時は env フォールバックへ抜ける（best-effort）。
     }
+  } catch {
+    // DB 取得失敗時は null を返す (env フォールバックは廃止)。
   }
-
-  const envKey = process.env.ELEVENLABS_API_KEY?.trim()
-  return envKey && envKey.length > 0 ? envKey : null
+  return null
 }
 
-async function requireElevenLabsKey(userId?: string): Promise<string> {
+async function requireElevenLabsKey(userId: string): Promise<string> {
   const key = await fetchElevenLabsKey(userId)
   if (!key) throw new MissingElevenLabsKeyError()
   return key
@@ -186,7 +179,7 @@ interface TtsRequestBody {
 async function callTts(
   text: string,
   opts: ElevenLabsVoiceOptions,
-  userId?: string,
+  userId: string,
 ): Promise<SceneAudioResult> {
   const trimmed = text.trim()
   if (trimmed.length === 0) {
@@ -274,7 +267,7 @@ async function callTts(
 export async function generateSceneNarration(
   narrationText: string,
   opts: ElevenLabsVoiceOptions = {},
-  userId?: string,
+  userId: string,
 ): Promise<SceneAudioResult> {
   return callTts(narrationText, opts, userId)
 }
@@ -293,7 +286,7 @@ export async function generateSceneNarration(
 export async function generateFullNarration(
   narrationsInOrder: string[],
   opts: ElevenLabsVoiceOptions = {},
-  userId?: string,
+  userId: string,
 ): Promise<SceneAudioResult> {
   const cleaned = narrationsInOrder.map(s => s.trim()).filter(s => s.length > 0)
   if (cleaned.length === 0) {
