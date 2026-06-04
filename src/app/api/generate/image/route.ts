@@ -5,6 +5,7 @@ import { analyzeImageStructure } from '@/lib/ai/vision'
 import { fetchAccountPromptTemplate } from '@/lib/ai/prompt-settings'
 import { fetchUserApiKeys, MissingApiKeyError } from '@/lib/ai/api-keys'
 import { checkRateLimit, RATE_LIMITS } from '@/lib/rate-limit'
+import { sanitizeProviderError } from '@/lib/ai/sanitize-error'
 
 const MAX_REF_IMAGE_BYTES = 7 * 1024 * 1024 // base64で約5MB相当
 const ALLOWED_REF_MIME = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif'])
@@ -138,7 +139,7 @@ ${safeStructure}
         }
       } catch (e) {
         // vision 失敗時は参考画像なしで続行
-        console.error('[generate/image] vision analysis failed:', e instanceof Error ? e.message : 'unknown')
+        console.error('[generate/image] vision analysis failed:', sanitizeProviderError(e))
       }
     }
 
@@ -157,7 +158,7 @@ ${imgTpl.trim().slice(0, 4000)}`
     if (e instanceof MissingApiKeyError) {
       return NextResponse.json({ error: e.message }, { status: 400 })
     }
-    console.error('[generate/image]', e instanceof Error ? e.message : 'unknown')
+    console.error('[generate/image]', sanitizeProviderError(e))
     return NextResponse.json({ error: '画像生成に失敗しました' }, { status: 500 })
   }
 }

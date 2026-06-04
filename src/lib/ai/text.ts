@@ -1,5 +1,6 @@
 import type { Account } from '@/types/database'
 import { resolvePrompt, DEFAULT_TEXT_PROMPT_TEMPLATE } from './prompt-presets'
+import { sanitizeProviderHttpError } from './sanitize-error'
 
 // OpenRouter経由でテキスト生成（コスト最適化）
 // モデル: google/gemini-3.5-flash (高速・低コスト)
@@ -267,7 +268,7 @@ ${recentSummaries.length > 0 ? '\n※ 過去投稿と切り口・主張・構成
 
   if (!res.ok) {
     const errText = await res.text().catch(() => '')
-    console.error('[OpenRouter text]', res.status, errText)
+    console.error('[OpenRouter text]', sanitizeProviderHttpError(res.status, errText))
     throw new Error(`AIテキスト生成に失敗しました (HTTP ${res.status})`)
   }
 

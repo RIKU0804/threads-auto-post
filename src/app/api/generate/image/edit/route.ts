@@ -3,6 +3,7 @@ import { createServerSupabaseClient } from '@/lib/supabase'
 import { uploadGeneratedImage } from '@/lib/ai/image'
 import { requireApiKey, MissingApiKeyError } from '@/lib/ai/api-keys'
 import { checkRateLimit, RATE_LIMITS } from '@/lib/rate-limit'
+import { sanitizeProviderError } from '@/lib/ai/sanitize-error'
 import OpenAI, { toFile } from 'openai'
 
 // OpenAI SDK の型は overload で複雑なので、必要な戻り値だけを取り出す薄いラッパー型
@@ -120,7 +121,7 @@ export async function POST(req: NextRequest) {
     if (e instanceof MissingApiKeyError) {
       return NextResponse.json({ error: e.message }, { status: 400 })
     }
-    console.error('[generate/image/edit]', e instanceof Error ? e.message : 'unknown')
+    console.error('[generate/image/edit]', sanitizeProviderError(e))
     return NextResponse.json({ error: '画像編集に失敗しました' }, { status: 500 })
   }
 }

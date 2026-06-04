@@ -4,6 +4,7 @@ import { fetchAccountPromptTemplate } from '@/lib/ai/prompt-settings'
 import { resolvePrompt, DEFAULT_THEMES_PROMPT_TEMPLATE } from '@/lib/ai/prompt-presets'
 import { requireApiKey, MissingApiKeyError } from '@/lib/ai/api-keys'
 import { checkRateLimit, RATE_LIMITS } from '@/lib/rate-limit'
+import { sanitizeProviderError, sanitizeProviderHttpError } from '@/lib/ai/sanitize-error'
 import type { Account } from '@/types/database'
 
 const DEMO_ACCOUNT: Pick<Account, 'persona' | 'tone' | 'target_audience' | 'post_topics'> = {
@@ -115,7 +116,7 @@ export async function POST(req: NextRequest) {
 
     if (!res.ok) {
       const errText = await res.text().catch(() => '')
-      console.error('[generate/themes] openrouter', res.status, errText)
+      console.error('[generate/themes] openrouter', sanitizeProviderHttpError(res.status, errText))
       // OpenRouter の HTTP status をユーザー向けにも添える（数字のみ。機密は含めない）。
       // 401=キー無効 / 402=クレジット不足 / 429=レート / 404=モデル不在 の切り分け用。
       return NextResponse.json(
@@ -142,7 +143,7 @@ export async function POST(req: NextRequest) {
     if (e instanceof MissingApiKeyError) {
       return NextResponse.json({ error: e.message }, { status: 400 })
     }
-    console.error('[generate/themes]', e instanceof Error ? e.message : 'unknown')
+    console.error('[generate/themes]', sanitizeProviderError(e))
     return NextResponse.json({ error: 'テーマ生成に失敗しました' }, { status: 500 })
   }
 }

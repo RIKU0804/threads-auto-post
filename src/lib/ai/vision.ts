@@ -4,6 +4,8 @@
  * - 画像生成プロンプトに合成する用
  */
 
+import { sanitizeProviderHttpError } from './sanitize-error'
+
 const VISION_MODEL = 'google/gemini-3.5-flash'
 const REQUEST_TIMEOUT_MS = 30_000
 
@@ -58,7 +60,7 @@ export async function analyzeImageStructure(
 
   if (!res.ok) {
     const errText = await res.text().catch(() => '')
-    console.error('[Vision API]', res.status, errText)
+    console.error('[Vision API]', sanitizeProviderHttpError(res.status, errText))
     throw new Error(`Vision API error (HTTP ${res.status})`)
   }
 

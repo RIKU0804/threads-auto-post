@@ -4,6 +4,7 @@ import { generateSNSText } from '@/lib/ai/text'
 import { fetchAccountPromptTemplate } from '@/lib/ai/prompt-settings'
 import { requireApiKey, MissingApiKeyError } from '@/lib/ai/api-keys'
 import { checkRateLimit, RATE_LIMITS } from '@/lib/rate-limit'
+import { sanitizeProviderError } from '@/lib/ai/sanitize-error'
 import type { Account } from '@/types/database'
 
 // アカウントなし時のデフォルト設定
@@ -162,7 +163,7 @@ export async function POST(req: NextRequest) {
     if (e instanceof MissingApiKeyError) {
       return NextResponse.json({ error: e.message }, { status: 400 })
     }
-    console.error('[generate/text]', e instanceof Error ? e.message : 'unknown')
+    console.error('[generate/text]', sanitizeProviderError(e))
     return NextResponse.json({ error: '生成に失敗しました' }, { status: 500 })
   }
 }

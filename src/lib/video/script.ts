@@ -2,6 +2,7 @@ import 'server-only'
 import { createAdminClient } from '@/lib/supabase-admin'
 import { decryptSecret } from '@/lib/crypto'
 import { MissingApiKeyError } from '@/lib/ai/api-keys'
+import { sanitizeProviderHttpError } from '@/lib/ai/sanitize-error'
 
 /**
  * AI ショート動画スクリプト生成モジュール。
@@ -410,7 +411,7 @@ export async function generateVideoScript(
 
     if (!res.ok) {
       const errText = await res.text().catch(() => '')
-      console.error('[OpenRouter script]', res.status, errText)
+      console.error('[OpenRouter script]', sanitizeProviderHttpError(res.status, errText))
       throw new ScriptGenerationError(`OpenRouter 呼び出しに失敗しました (HTTP ${res.status})`)
     }
 

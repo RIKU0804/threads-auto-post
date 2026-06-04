@@ -6,6 +6,7 @@ import OpenAI from 'openai'
 import { createAdminClient } from '@/lib/supabase-admin'
 import { decryptSecret } from '@/lib/crypto'
 import { MissingApiKeyError } from '@/lib/ai/api-keys'
+import { sanitizeProviderError } from '@/lib/ai/sanitize-error'
 import type { GenerationMode, Scene, Video, VideoStatus } from '@/types/database'
 import { generateVideoScript, type SceneDraft } from '@/lib/video/script'
 import {
@@ -515,7 +516,7 @@ export async function generateSceneImages(videoId: string): Promise<void> {
   const failures = results.filter(r => r.status === 'rejected') as PromiseRejectedResult[]
   if (failures.length > 0) {
     const summary = failures
-      .map((f, i) => `[${i}] ${f.reason instanceof Error ? f.reason.message : String(f.reason)}`)
+      .map((f, i) => `[${i}] ${f.reason instanceof Error ? sanitizeProviderError(f.reason) : String(f.reason)}`)
       .join('; ')
     throw new PipelineError(`画像生成で ${failures.length}/${todo.length} 件が失敗: ${summary}`)
   }
@@ -571,7 +572,7 @@ export async function generateSceneAudio(videoId: string): Promise<void> {
   const failures = results.filter(r => r.status === 'rejected') as PromiseRejectedResult[]
   if (failures.length > 0) {
     const summary = failures
-      .map((f, i) => `[${i}] ${f.reason instanceof Error ? f.reason.message : String(f.reason)}`)
+      .map((f, i) => `[${i}] ${f.reason instanceof Error ? sanitizeProviderError(f.reason) : String(f.reason)}`)
       .join('; ')
     throw new PipelineError(`音声生成で ${failures.length}/${todo.length} 件が失敗: ${summary}`)
   }
@@ -824,7 +825,7 @@ export async function runVideoPipeline(
     await generateSceneAudio(videoId)
     await renderFinalVideo(videoId)
   } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : 'unknown pipeline error'
+    const message = err instanceof Error ? sanitizeProviderError(err) : 'unknown pipeline error'
     await markVideoFailed(videoId, message)
     // ジョブ実行コンテキストでは throw しても上流が拾えないため、ここで終了。
     return
@@ -1310,7 +1311,7 @@ export async function regenerateAllSceneAudio(videoId: string, expectedUserId?: 
     // (まだ動画 MP4 は無いので、UI 側で「動画を作り直す」ボタンが出る)
     await updateVideoStatus(videoId, 'ready', { error_message: null })
   } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : 'unknown audio regen error'
+    const message = err instanceof Error ? sanitizeProviderError(err) : 'unknown audio regen error'
     await markVideoFailed(videoId, message)
   }
 }
@@ -1344,7 +1345,7 @@ export async function regenerateSceneTracked(
     // 完了 → ready（final_video_url は regenerate 内でクリア済み = 要再レンダー）
     await updateVideoStatus(videoId, 'ready', { error_message: null })
   } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : 'unknown scene regen error'
+    const message = err instanceof Error ? sanitizeProviderError(err) : 'unknown scene regen error'
     await markVideoFailed(videoId, message)
   }
 }
