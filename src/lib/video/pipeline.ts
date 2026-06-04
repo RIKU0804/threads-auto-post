@@ -8,7 +8,12 @@ import { decryptSecret } from '@/lib/crypto'
 import { MissingApiKeyError } from '@/lib/ai/api-keys'
 import type { GenerationMode, Scene, Video, VideoStatus } from '@/types/database'
 import { generateVideoScript, type SceneDraft } from '@/lib/video/script'
-import { generateFullNarration, generateSceneNarration } from '@/lib/video/elevenlabs'
+import {
+  generateFullNarration,
+  generateSceneNarration,
+  type ElevenLabsVoiceOptions,
+} from '@/lib/video/elevenlabs'
+import { DEFAULT_VOICE_ID } from '@/lib/video/voice-presets'
 import {
   generateAvatarVideo,
   pollUntilComplete,
@@ -60,6 +65,68 @@ import { assertFetchableVideoUrl } from '@/lib/platforms/publishers'
 const IMAGE_MODEL = 'gpt-image-2'
 const IMAGE_SIZE = '1024x1792' as const // 9:16 縦長 (Remotion 1080x1920 に近い比率)
 const IMAGE_TIMEOUT_MS = 120_000
+
+// 各シーン末尾に入れる無音の「間」。音声が終わってから次シーンに移るまでの余韻。
+// SNS 動画として聴き取りやすさを保ちつつ、テンポを崩さないギリギリの量。
+// 大きくしすぎるとダラっとして離脱率が上がる。
+const SCENE_TAIL_GAP_SEC = 0.2
+// scenes.duration の下限・上限
+const SCENE_DURATION_MIN_SEC = 2
+const SCENE_DURATION_MAX_SEC = 15
+
+// ElevenLabs TTS の並列度。Free / Starter プランは同時 2 リクエストまでで
+// それを超えると 429。安全側に 2 で固定 (Pro 以上でも体感は変わらない)。
+const TTS_CONCURRENCY = 2
+
+// gpt-image-2 の並列度。OpenAI の組織レート制限は通常 "5 images/min" のため
+// 全シーンを一気に投げると 429 になる。並列度を絞りつつ、超過しても
+// SDK の自動リトライ (maxRetries) が Retry-After を尊重して回復する。
+const IMAGE_CONCURRENCY = 2
+// gpt-image-2 の 429 / 5xx に対する SDK 自動リトライ回数。
+// 「5枚/分」制限では 6 枚目以降が最大 60 秒待ちになるため多めに確保する。
+const IMAGE_MAX_RETRIES = 5
+
+// Remotion h264 エンコードの CRF (品質係数)。
+//   - 範囲 1(高品質/大) 〜 51(低品質/小)。Remotion のデフォルトは 18 (高品質だがファイル巨大)。
+//   - 24 にすると体感画質をほぼ保ったままファイルサイズが概ね 1/2〜1/3 になる。
+//   - Supabase 無料プランの 50MB アップロード上限に収めるための主対策。
+//   - 40 秒・1080×1920 で概ね 20〜35MB に収まる想定。
+const VIDEO_CRF = 24
+
+/**
+ * 配列 items に対し関数 fn を並列度 concurrency で実行し、
+ * Promise.allSettled 互換の結果配列を返す。
+ *
+ * 「ワーカープールから 1 件取って fn を実行する」を concurrency 個並列で回す。
+ * input の順序は維持。
+ */
+async function mapWithConcurrency<TIn, TOut>(
+  items: TIn[],
+  concurrency: number,
+  fn: (item: TIn) => Promise<TOut>,
+): Promise<PromiseSettledResult<TOut>[]> {
+  // 空配列は早期 return（sparse array や無駄なワーカー spawn を避ける）。
+  if (items.length === 0) return []
+  const results: PromiseSettledResult<TOut>[] = new Array(items.length)
+  const slots = Math.max(1, Math.min(concurrency, items.length))
+  let cursor = 0
+
+  async function worker(): Promise<void> {
+    while (true) {
+      const idx = cursor++
+      if (idx >= items.length) return
+      try {
+        const value = await fn(items[idx])
+        results[idx] = { status: 'fulfilled', value }
+      } catch (reason: unknown) {
+        results[idx] = { status: 'rejected', reason }
+      }
+    }
+  }
+
+  await Promise.all(Array.from({ length: slots }, () => worker()))
+  return results
+}
 
 // パイプラインを Path A(Lambda) と Path B(local) で切り替えるフラグ。
 // 既定は local。AWS をセットアップしたら REMOTION_PROVIDER=lambda にする。
@@ -126,13 +193,15 @@ async function loadScenes(videoId: string): Promise<Scene[]> {
   return (data ?? []) as Scene[]
 }
 
-async function loadSceneById(sceneId: string): Promise<Scene> {
+/**
+ * scene を取得する。expectedVideoId を渡すと、その video に属さない scene は
+ * 「見つからない」として扱う（IDOR / TOCTOU の防御層。route で検証済みでも二重に守る）。
+ */
+async function loadSceneById(sceneId: string, expectedVideoId?: string): Promise<Scene> {
   const supabase = createAdminClient()
-  const { data, error } = await supabase
-    .from('scenes')
-    .select('*')
-    .eq('id', sceneId)
-    .maybeSingle()
+  let query = supabase.from('scenes').select('*').eq('id', sceneId)
+  if (expectedVideoId) query = query.eq('video_id', expectedVideoId)
+  const { data, error } = await query.maybeSingle()
   if (error) {
     throw new PipelineError(`scene の取得に失敗しました: ${error.message}`, error)
   }
@@ -140,6 +209,24 @@ async function loadSceneById(sceneId: string): Promise<Scene> {
     throw new PipelineError(`scene が見つかりません: ${sceneId}`)
   }
   return data as Scene
+}
+
+/**
+ * 削除済みシーンに対する fire-and-forget ジョブを早期 return するためのチェック。
+ * 「シーン追加→削除→追加」を高速連打したときに、消えたシーンのために
+ * 画像/音声 API を呼び続けるのを防ぐ。
+ *
+ * @returns true なら scene はまだ存在する (= 処理を続行してよい)
+ */
+async function sceneExists(sceneId: string): Promise<boolean> {
+  const supabase = createAdminClient()
+  const { data, error } = await supabase
+    .from('scenes')
+    .select('id')
+    .eq('id', sceneId)
+    .maybeSingle()
+  if (error) return false
+  return Boolean(data)
 }
 
 async function updateVideoStatus(
@@ -348,7 +435,8 @@ async function generateOneImage(
   input: ImageGenInput,
   openaiKey: string,
 ): Promise<ImageGenOutput> {
-  const client = new OpenAI({ apiKey: openaiKey, timeout: IMAGE_TIMEOUT_MS, maxRetries: 1 })
+  // maxRetries で 429 (rate limit) を SDK が Retry-After を尊重して自動リトライする。
+  const client = new OpenAI({ apiKey: openaiKey, timeout: IMAGE_TIMEOUT_MS, maxRetries: IMAGE_MAX_RETRIES })
 
   // SDK の return 型に依存せず、runtime で必要なフィールドのみ narrowing する。
   // double-cast (`as unknown as Foo`) は型エラーを潰すだけで実行時の安全性を担保しない。
@@ -408,21 +496,21 @@ export async function generateSceneImages(videoId: string): Promise<void> {
 
   const openaiKey = await fetchOpenAiKey(video.user_id)
 
-  const results = await Promise.allSettled(
-    todo.map(async (scene) => {
-      const out = await generateOneImage(
-        {
-          prompt: scene.image_prompt as string,
-          userId: video.user_id,
-          videoId,
-          sceneOrder: scene.order_index,
-        },
-        openaiKey,
-      )
-      await updateSceneRow(scene.id, { image_url: out.storagePath })
-      return out
-    }),
-  )
+  // gpt-image-2 は組織あたり "5枚/分" 等の制限があるので並列度を絞る。
+  // 全件並列だと 429 で後半シーンが落ちる。超過分は SDK の自動リトライで回復。
+  const results = await mapWithConcurrency(todo, IMAGE_CONCURRENCY, async (scene) => {
+    const out = await generateOneImage(
+      {
+        prompt: scene.image_prompt as string,
+        userId: video.user_id,
+        videoId,
+        sceneOrder: scene.order_index,
+      },
+      openaiKey,
+    )
+    await updateSceneRow(scene.id, { image_url: out.storagePath })
+    return out
+  })
 
   const failures = results.filter(r => r.status === 'rejected') as PromiseRejectedResult[]
   if (failures.length > 0) {
@@ -452,25 +540,33 @@ export async function generateSceneAudio(videoId: string): Promise<void> {
   const todo = scenes.filter(s => !s.audio_url && typeof s.narration_text === 'string')
   if (todo.length === 0) return
 
-  const results = await Promise.allSettled(
-    todo.map(async (scene) => {
-      const res = await generateSceneNarration(scene.narration_text as string, {}, video.user_id)
-      const uploaded = await uploadSceneAudio({
-        userId: video.user_id,
-        videoId,
-        sceneOrder: scene.order_index,
-        audioBytes: res.audioBytes,
-        contentType: res.mimeType,
-      })
-      // duration は narration の実尺で補正 (最低 2 秒、最大 15 秒)
-      const corrected = Math.max(2, Math.min(15, res.durationEstimateSec))
-      await updateSceneRow(scene.id, {
-        audio_url: uploaded.storagePath,
-        duration: Math.round(corrected * 10) / 10,
-      })
-      return uploaded
-    }),
-  )
+  const voiceOpts: ElevenLabsVoiceOptions = {
+    voiceId: video.elevenlabs_voice_id ?? DEFAULT_VOICE_ID,
+  }
+
+  // ElevenLabs は同時リクエスト数制限が厳しいので並列度を絞る。
+  // 全件並列だと 429 (rate limit) に当たって途中で落ちる。
+  const results = await mapWithConcurrency(todo, TTS_CONCURRENCY, async (scene) => {
+    const res = await generateSceneNarration(scene.narration_text as string, voiceOpts, video.user_id)
+    const uploaded = await uploadSceneAudio({
+      userId: video.user_id,
+      videoId,
+      sceneOrder: scene.order_index,
+      audioBytes: res.audioBytes,
+      contentType: res.mimeType,
+    })
+    // duration は「ナレーション尺 + 末尾無音バッファ」で補正
+    // (最低 SCENE_DURATION_MIN_SEC、最大 SCENE_DURATION_MAX_SEC)
+    const corrected = Math.max(
+      SCENE_DURATION_MIN_SEC,
+      Math.min(SCENE_DURATION_MAX_SEC, res.durationEstimateSec + SCENE_TAIL_GAP_SEC),
+    )
+    await updateSceneRow(scene.id, {
+      audio_url: uploaded.storagePath,
+      duration: Math.round(corrected * 10) / 10,
+    })
+    return uploaded
+  })
 
   const failures = results.filter(r => r.status === 'rejected') as PromiseRejectedResult[]
   if (failures.length > 0) {
@@ -576,6 +672,8 @@ async function renderWithLocalRemotion(
     composition,
     serveUrl,
     codec: 'h264',
+    // CRF でファイルサイズを抑える (Supabase の 50MB アップロード上限対策)。
+    crf: VIDEO_CRF,
     outputLocation,
     inputProps: inputProps as unknown as Record<string, unknown>,
     // Chrome を都度起動するコストを許容。production では事前ビルドキャッシュを使う。
@@ -634,10 +732,11 @@ export async function renderFinalVideo(videoId: string): Promise<void> {
       videoId,
       mp4Bytes: new Uint8Array(mp4),
     })
-    // 公開・プレビュー双方で fetch されるため signed URL を保存する。
-    // storagePath だけだと video タグも publish 経路も https URL が必要なため動かない。
+    // storage path を保存する（signed URL は有効期限があるため本体として保存しない）。
+    // 読み取り時に signed-urls.ts の decorateVideoWithSignedUrls / resolveAssetUrl が署名する。
+    // scenes.image_url / audio_url と同じ「path 保存・読み取り時に署名」方針に統一。
     await updateVideoStatus(videoId, 'ready', {
-      final_video_url: uploaded.signedUrl,
+      final_video_url: uploaded.storagePath,
       error_message: null,
     })
   } finally {
@@ -657,6 +756,29 @@ export async function renderFinalVideo(videoId: string): Promise<void> {
  * バックグラウンドジョブから呼ばれることを想定し、例外は外に投げず
  * failed ステータスに落としてからリターンする。
  */
+/**
+ * 生成ジョブの実行ロックを取得する。
+ * compare-and-set で「draft → generating_script」に遷移できたジョブだけが処理を進める。
+ * 既に generating_* / rendering / ready の場合は別ジョブが処理中（または完了済み）なので
+ * false を返し、二重実行（= 二重課金）を防ぐ。
+ *
+ * 新規(POST /api/videos)・restart(failed→draft) いずれも draft から来るので draft を起点にする。
+ */
+async function acquireGenerationLock(videoId: string): Promise<boolean> {
+  const supabase = createAdminClient()
+  const { data, error } = await supabase
+    .from('videos')
+    .update({ status: 'generating_script' })
+    .eq('id', videoId)
+    .eq('status', 'draft')
+    .select('id')
+    .maybeSingle()
+  if (error) {
+    throw new PipelineError(`生成ロックの取得に失敗しました: ${error.message}`, error)
+  }
+  return Boolean(data)
+}
+
 export async function runVideoPipeline(
   videoId: string,
   opts: PipelineRunOptions = {},
@@ -666,6 +788,14 @@ export async function runVideoPipeline(
 
     // 既に終了している場合は何もしない
     if (video.status === 'ready') return
+
+    // 多重実行ロック: draft からのみ acquire。取れなければ別ジョブが処理中なので終了。
+    // （プロセス再投入や enqueue リトライによる二重生成・二重課金を防ぐ）
+    const acquired = await acquireGenerationLock(videoId)
+    if (!acquired) {
+      console.warn(`[pipeline] ${videoId} は既に処理中または完了済み。二重実行を回避します`)
+      return
+    }
 
     // generation_mode で分岐。
     // - 'remotion'      : 既存の Script → Images → Voice → Render フロー
@@ -869,7 +999,8 @@ async function finalizeHeyGenOutput(
   })
 
   await updateVideoStatus(video.id, 'ready', {
-    final_video_url: uploaded.signedUrl,
+    // storage path を保存（読み取り時に署名）。Remotion 経路と統一。
+    final_video_url: uploaded.storagePath,
     published_to: [],
     publish_status: 'unpublished',
     error_message: null,
@@ -1066,8 +1197,8 @@ async function downloadHeyGenVideo(videoUrl: string): Promise<Uint8Array> {
  * 1 シーンの画像だけを再生成する (ユーザーの「やり直し」ボタン用)。
  * 動画ステータスは変えない。
  */
-export async function regenerateSceneImage(sceneId: string): Promise<void> {
-  const scene = await loadSceneById(sceneId)
+export async function regenerateSceneImage(sceneId: string, expectedVideoId?: string): Promise<void> {
+  const scene = await loadSceneById(sceneId, expectedVideoId)
   if (!scene.image_prompt) {
     throw new PipelineError('image_prompt が無いため再生成できません')
   }
@@ -1082,6 +1213,13 @@ export async function regenerateSceneImage(sceneId: string): Promise<void> {
     },
     openaiKey,
   )
+  // 画像生成中にシーンが削除されているケースの保護。
+  // upload は完了するが DB の image_url 更新で 0 行ヒット → 課金は発生済みなので
+  // ログだけ残す。
+  if (!(await sceneExists(sceneId))) {
+    console.warn(`[regenerateSceneImage] scene ${sceneId} は削除済み。生成結果は破棄します`)
+    return
+  }
   await updateSceneRow(scene.id, { image_url: out.storagePath })
   // 画像が変わると最終動画も再レンダリング対象。final_video_url をクリアする。
   await createAdminClient()
@@ -1100,8 +1238,9 @@ export async function regenerateSceneImage(sceneId: string): Promise<void> {
 export async function updateSceneTexts(
   sceneId: string,
   patch: { caption_text?: string; narration_text?: string; image_prompt?: string },
+  expectedVideoId?: string,
 ): Promise<{ narrationChanged: boolean; imageChanged: boolean }> {
-  const scene = await loadSceneById(sceneId)
+  const scene = await loadSceneById(sceneId, expectedVideoId)
   const updates: Record<string, unknown> = {}
   let narrationChanged = false
   let imageChanged = false
@@ -1133,26 +1272,127 @@ export async function updateSceneTexts(
 }
 
 /**
- * failed 状態の動画を draft に戻して再投入する（idempotent な step が再走する）。
+ * 動画の全シーンの音声を作り直す。voice 変更時の挙動。
+ *
+ * 全シーンの audio_url を null クリア → generateSceneAudio() を再走 → final_video_url クリア。
+ * 失敗時は markVideoFailed で 'failed' 状態に落とす。
+ *
+ * fire-and-forget で呼び出されることを想定。
  */
-export async function restartFailedVideo(videoId: string): Promise<void> {
-  const video = await loadVideo(videoId)
-  if (video.status !== 'failed') {
-    throw new PipelineError('failed 状態の動画のみ再開できます')
+export async function regenerateAllSceneAudio(videoId: string, expectedUserId?: string): Promise<void> {
+  try {
+    const video = await loadVideo(videoId)
+    // 防御層: 呼び出し元が userId を渡したら所有者照合（将来 user_id 検証が漏れても守る）
+    if (expectedUserId && video.user_id !== expectedUserId) {
+      throw new PipelineError('動画の所有者が一致しません')
+    }
+    if (video.generation_mode !== 'remotion') {
+      throw new PipelineError('HeyGen アバター動画には対応していません')
+    }
+    const supabase = createAdminClient()
+    // 全シーンの audio_url をクリア (idempotent な再生成のため)
+    const { error: clearErr } = await supabase
+      .from('scenes')
+      .update({ audio_url: null })
+      .eq('video_id', videoId)
+    if (clearErr) {
+      throw new PipelineError(`scenes.audio_url のクリアに失敗: ${clearErr.message}`, clearErr)
+    }
+    // 古い動画 MP4 もクリア
+    await supabase
+      .from('videos')
+      .update({ final_video_url: null })
+      .eq('id', videoId)
+
+    await generateSceneAudio(videoId)
+
+    // 音声が揃った直後の整合状態を 'ready' に戻す
+    // (まだ動画 MP4 は無いので、UI 側で「動画を作り直す」ボタンが出る)
+    await updateVideoStatus(videoId, 'ready', { error_message: null })
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'unknown audio regen error'
+    await markVideoFailed(videoId, message)
   }
-  await updateVideoStatus(videoId, 'draft', { error_message: null })
+}
+
+/**
+ * 1 シーンのメディア（画像 / 音声）再生成を video.status で追跡可能にするラッパー。
+ *
+ * 個別の regenerateSceneImage / regenerateSceneAudio は status を変えないため、
+ * fire-and-forget で呼ぶと UI が完了を追えない（生成完了しても画面は空/古いまま）。
+ * このラッパーは status を generating_images / generating_voice に遷移させてから
+ * 生成し、完了で 'ready' に戻す。UI は既存のポーリング（non-terminal status を監視）で
+ * 完了を検知して再取得できる。
+ *
+ * 失敗時は failed に落とす（restart で復帰可能）。
+ */
+export async function regenerateSceneTracked(
+  videoId: string,
+  sceneId: string,
+  target: 'image' | 'audio' | 'both',
+  expectedVideoId?: string,
+): Promise<void> {
+  try {
+    if (target === 'image' || target === 'both') {
+      await updateVideoStatus(videoId, 'generating_images')
+      await regenerateSceneImage(sceneId, expectedVideoId)
+    }
+    if (target === 'audio' || target === 'both') {
+      await updateVideoStatus(videoId, 'generating_voice')
+      await regenerateSceneAudio(sceneId, expectedVideoId)
+    }
+    // 完了 → ready（final_video_url は regenerate 内でクリア済み = 要再レンダー）
+    await updateVideoStatus(videoId, 'ready', { error_message: null })
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'unknown scene regen error'
+    await markVideoFailed(videoId, message)
+  }
+}
+
+/**
+ * failed 状態の動画を draft に戻して再投入する（idempotent な step が再走する）。
+ *
+ * compare-and-set で「failed → draft」のみ acquire 可能。
+ * 連打や並行リクエストでも 1 つのジョブだけが「再開した動画」を取得し、
+ * 残りは false を返す → 呼び出し側 (route) で enqueue をスキップする。
+ *
+ * @returns true なら state を acquire できた (= ジョブを enqueue してよい)
+ *          false なら既に他のリクエストが acquire 済み or もう failed ではない
+ */
+export async function restartFailedVideo(videoId: string): Promise<boolean> {
+  const supabase = createAdminClient()
+  const { data: locked, error } = await supabase
+    .from('videos')
+    .update({
+      status: 'draft',
+      error_message: null,
+      // 再開時に経過時間カウントもリセット
+      generation_started_at: new Date().toISOString(),
+    })
+    .eq('id', videoId)
+    .eq('status', 'failed')
+    .select('id')
+    .maybeSingle()
+  if (error) {
+    throw new PipelineError(`restart の状態遷移に失敗しました: ${error.message}`, error)
+  }
+  // locked が null → 既に他のリクエストが draft に進めた、または failed じゃなくなった
+  return Boolean(locked)
 }
 
 /**
  * 1 シーンの音声だけを再生成する。
  */
-export async function regenerateSceneAudio(sceneId: string): Promise<void> {
-  const scene = await loadSceneById(sceneId)
+export async function regenerateSceneAudio(sceneId: string, expectedVideoId?: string): Promise<void> {
+  const scene = await loadSceneById(sceneId, expectedVideoId)
   if (!scene.narration_text) {
     throw new PipelineError('narration_text が無いため再生成できません')
   }
   const video = await loadVideo(scene.video_id)
-  const res = await generateSceneNarration(scene.narration_text, {}, video.user_id)
+  const voiceOpts: ElevenLabsVoiceOptions = {
+    voiceId: video.elevenlabs_voice_id ?? DEFAULT_VOICE_ID,
+  }
+  const res = await generateSceneNarration(scene.narration_text, voiceOpts, video.user_id)
   const uploaded = await uploadSceneAudio({
     userId: video.user_id,
     videoId: scene.video_id,
@@ -1160,7 +1400,16 @@ export async function regenerateSceneAudio(sceneId: string): Promise<void> {
     audioBytes: res.audioBytes,
     contentType: res.mimeType,
   })
-  const corrected = Math.max(2, Math.min(15, res.durationEstimateSec))
+  // 音声生成中にシーンが削除されているケースの保護。
+  // upload は完了するが、scene 行に書く必要がないので早期 return。
+  if (!(await sceneExists(sceneId))) {
+    console.warn(`[regenerateSceneAudio] scene ${sceneId} は削除済み。生成結果は破棄します`)
+    return
+  }
+  const corrected = Math.max(
+    SCENE_DURATION_MIN_SEC,
+    Math.min(SCENE_DURATION_MAX_SEC, res.durationEstimateSec + SCENE_TAIL_GAP_SEC),
+  )
   await updateSceneRow(scene.id, {
     audio_url: uploaded.storagePath,
     duration: Math.round(corrected * 10) / 10,

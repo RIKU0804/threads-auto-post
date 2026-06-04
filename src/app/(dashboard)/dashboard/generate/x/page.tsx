@@ -203,17 +203,25 @@ export default function XGeneratePage() {
   }, [selectedAccount])
 
   useEffect(() => {
-    fetch('/api/accounts')
-      .then(r => r.json() as Promise<Account[]>)
-      .then(accs => {
-        const xAccounts = (Array.isArray(accs) ? accs : []).filter(a => a.platform === 'x')
+    const ctrl = new AbortController()
+    async function loadInitial() {
+      try {
+        const res = await fetch('/api/accounts', { signal: ctrl.signal })
+        const raw: unknown = res.ok ? await res.json() : []
+        if (ctrl.signal.aborted) return
+        const accs = Array.isArray(raw) ? (raw as Account[]) : []
+        const xAccounts = accs.filter(a => a.platform === 'x')
         setAccounts(xAccounts)
         if (xAccounts.length > 0) setSelectedAccount(xAccounts[0].id)
-      })
-      .catch(e => {
-        console.error('[generate/x] initial load failed', e)
+      } catch (e) {
+        if (e instanceof DOMException && e.name === 'AbortError') return
+        console.error('[generate/x] initial load failed', e instanceof Error ? e.message : 'unknown')
         toast.error('アカウント情報の取得に失敗しました。再読み込みしてください。')
-      })
+      }
+    }
+    void loadInitial()
+    return () => ctrl.abort()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   const isDemoMode = !selectedAccount

@@ -197,6 +197,26 @@ export const publishers: Partial<Record<Platform, Publisher>> = {
 
 // ---------- Token refresh ----------
 // auth error 時に DB の access_token を更新し、true なら再試行する。
+/**
+ * account の機密フィールドを復号した新しい Account を返す。
+ * accounts は POST 時に access_token / x_* / threads_client_secret を encryptSecret で
+ * 暗号化保存している（既存の平文レコードは decryptSecret の plaintext フォールバックで互換）。
+ * publish のエントリで 1 回だけ適用し、以降の publisher は平文として扱う。
+ *
+ * 注: tiktok の decryptTikTokAccessToken / youtube の youtube_refresh_token 個別復号と
+ * 二重になる箇所があるが、decryptSecret は平文を素通しするため無害。
+ */
+function decryptAccountSecrets(account: Account): Account {
+  return {
+    ...account,
+    access_token: decryptSecret(account.access_token),
+    threads_client_secret: decryptSecret(account.threads_client_secret),
+    x_api_key: decryptSecret(account.x_api_key),
+    x_api_secret: decryptSecret(account.x_api_secret),
+    x_access_secret: decryptSecret(account.x_access_secret),
+  }
+}
+
 async function tryRefreshToken(account: Account): Promise<boolean> {
   const admin = createAdminClient()
 
@@ -209,7 +229,8 @@ async function tryRefreshToken(account: Account): Promise<boolean> {
       await admin
         .from('accounts')
         .update({
-          access_token: refreshed.accessToken,
+          // DB には暗号化して保存（メモリ上の account.access_token は平文のまま使う）
+          access_token: encryptSecret(refreshed.accessToken),
           token_expires_at: new Date(refreshed.expiresAt).toISOString(),
         })
         .eq('id', account.id)
@@ -237,23 +258,26 @@ function isAuthError(e: unknown): boolean {
  * validate + publish を行う。auth error なら 1 回だけ refresh を試みて再投稿する。
  */
 export async function publishPost(ctx: PublishContext): Promise<PublishResult> {
-  const publisher = publishers[ctx.account.platform]
+  // エントリで機密フィールドを復号し、以降は平文の account を使う。
+  const account = decryptAccountSecrets(ctx.account)
+  const dctx: PublishContext = { ...ctx, account }
+  const publisher = publishers[account.platform]
   if (!publisher) {
-    throw new Error(`${ctx.account.platform} の投稿は未対応です`)
+    throw new Error(`${account.platform} の投稿は未対応です`)
   }
-  publisher.validate(ctx)
+  publisher.validate(dctx)
 
   try {
-    return await publisher.publish(ctx)
+    return await publisher.publish(dctx)
   } catch (e) {
     if (!isAuthError(e)) throw e
 
-    const refreshed = await tryRefreshToken(ctx.account)
+    const refreshed = await tryRefreshToken(dctx.account)
     if (!refreshed) {
       throw new Error('アクセストークンの有効期限が切れています。再連携が必要です')
     }
     // 更新後の credentials で 1 回だけ再試行
-    return publisher.publish(ctx)
+    return publisher.publish(dctx)
   }
 }
 
@@ -653,9 +677,9 @@ async function refreshTikTokAccountToken(account: Account): Promise<Account | nu
  * Instagram long-lived access token を refresh エンドポイントで rotate し、
  * DB に保存して新 Account を返す（呼び出し元の account は mutate しない）。
  *
- * Instagram token は plaintext で保存される運用（accounts POST 経路がそうなっている）
- * ため、ここでも暗号化はしない。将来的に encryptSecret に統一する余地はあるが、
- * 本パッチでは scope 外とする。
+ * 入力 account.access_token は publishVideo エントリで復号済みの平文である前提。
+ * DB へは encryptSecret で暗号化して保存し、返り値の access_token は平文のまま
+ * （以降の publish で使うため）。
  *
  * Docs: GET /refresh_access_token?grant_type=ig_refresh_token
  */
@@ -668,7 +692,7 @@ async function refreshInstagramAccountToken(account: Account): Promise<Account |
     await admin
       .from('accounts')
       .update({
-        access_token: refreshed.accessToken,
+        access_token: encryptSecret(refreshed.accessToken),
         token_expires_at: nextExpiresAt,
       })
       .eq('id', account.id)
@@ -787,47 +811,48 @@ function asVideoPlatform(platform: Platform): VideoPlatform | null {
  * - TikTok は refresh_token から新トークンを取得し、新 account で publish 再実行
  */
 export async function publishVideo(ctx: VideoPublishContext): Promise<VideoPublishResult> {
-  const platform = asVideoPlatform(ctx.account.platform)
+  // エントリで機密フィールドを復号し、以降は平文の account を使う。
+  const account = decryptAccountSecrets(ctx.account)
+  const dctx: VideoPublishContext = { ...ctx, account }
+  const platform = asVideoPlatform(account.platform)
   if (!platform) {
-    throw new Error(`${ctx.account.platform} の動画投稿は未対応です`)
+    throw new Error(`${account.platform} の動画投稿は未対応です`)
   }
   const publisher = videoPublishers[platform]
   if (!publisher) {
     throw new Error(`${platform} の動画投稿は未対応です`)
   }
-  publisher.validate(ctx)
+  publisher.validate(dctx)
 
   try {
-    return await publisher.publish(ctx)
+    return await publisher.publish(dctx)
   } catch (e) {
     if (!isVideoAuthError(e)) throw e
 
+    // 二重アップロード防止 (P2):
+    // TikTok は publish 前に creator-info 取得→トークン rotate して 1 回だけリトライ。
+    // これはアップロード前のトークン失効を救済するもので、init 前なので二重投稿しない。
     if (platform === 'tiktok') {
-      const next = await refreshTikTokAccountToken(ctx.account)
+      const next = await refreshTikTokAccountToken(dctx.account)
       if (!next) {
         throw new Error('TikTok のアクセストークン更新に失敗しました。再連携してください')
       }
-      return publisher.publish({ ...ctx, account: next })
+      return publisher.publish({ ...dctx, account: next })
     }
 
+    // Instagram も token rotate して 1 回だけ retry（コンテナ作成前のトークン失効を救済）。
     if (platform === 'instagram') {
-      // Instagram long-lived token (60日) を refresh エンドポイントで rotate して
-      // 1 回だけ retry する。refresh 失敗時は再連携を促す。
-      const next = await refreshInstagramAccountToken(ctx.account)
+      const next = await refreshInstagramAccountToken(dctx.account)
       if (!next) {
         throw new Error('Instagram のアクセストークン更新に失敗しました。再連携してください')
       }
-      return publisher.publish({ ...ctx, account: next })
+      return publisher.publish({ ...dctx, account: next })
     }
 
-    // YouTube: publish 自体が refresh するため、同じ ctx で 1 回だけリトライ
-    try {
-      return await publisher.publish(ctx)
-    } catch (retryErr) {
-      if (isVideoAuthError(retryErr)) {
-        throw new Error('YouTube のアクセストークン更新に失敗しました。再連携してください')
-      }
-      throw retryErr
-    }
+    // YouTube: publish は内部冒頭で必ず access token を refresh してから upload する
+    // （refreshYouTubeAccessToken）。したがって publish 中の auth エラーは
+    // 「アップロード送信中の失効」であり、ここでリトライすると resumable upload を
+    // 再実行して動画が二重投稿される。リトライせず再連携を促して中断する。
+    throw new Error('YouTube への公開中にエラーが発生しました。重複投稿を避けるため中断しました。公開状況を確認のうえ、必要なら再連携してください。')
   }
 }

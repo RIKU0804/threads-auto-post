@@ -1,11 +1,12 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { CheckCircle, AlertCircle, PenLine, Send, FileText, ChevronDown, ChevronUp, ImageIcon, User, RefreshCw, Loader2 } from 'lucide-react'
+import { CheckCircle, AlertCircle, PenLine, Send, FileText, ChevronDown, ChevronUp, ImageIcon, User, RefreshCw, Loader2, X } from 'lucide-react'
 import { Card } from '@/components/ui/Card'
 import { cx } from '@/lib/utils'
 import { useToast } from '@/components/ui/Toast'
 import { useConfirm } from '@/components/ui/ConfirmDialog'
+import { useModalA11y } from '@/lib/hooks/use-modal-a11y'
 import type { PostStatus, PostWithAccount } from '@/types/database'
 
 const STATUS_CONFIG: Record<PostStatus, { label: string; cls: string; Icon: typeof PenLine }> = {
@@ -25,6 +26,7 @@ function formatDate(iso: string) {
 function PostCard({ post, onPublish }: { post: PostWithAccount; onPublish: (id: string) => void }) {
   const [expanded, setExpanded] = useState(false)
   const [imgOpen, setImgOpen] = useState(false)
+  const imgModalRef = useModalA11y<HTMLDivElement>(imgOpen, () => setImgOpen(false))
   const { label, cls, Icon } = STATUS_CONFIG[post.status] ?? STATUS_CONFIG.draft
 
   const text = post.text_content ?? ''
@@ -38,10 +40,17 @@ function PostCard({ post, onPublish }: { post: PostWithAccount; onPublish: (id: 
         <div className="shrink-0">
           {post.image_url ? (
             <>
-              <button onClick={() => setImgOpen(true)} className="block">
+              <button
+                type="button"
+                onClick={() => setImgOpen(true)}
+                aria-label="投稿画像を拡大表示"
+                className="block rounded focus-visible:outline-2 focus-visible:outline-[#00A3BF] focus-visible:outline-offset-2"
+              >
                 <img
                   src={post.image_url}
                   alt="投稿画像"
+                  width={144}
+                  height={144}
                   className="h-36 w-36 object-cover transition hover:opacity-90"
                 />
               </button>
@@ -50,19 +59,35 @@ function PostCard({ post, onPublish }: { post: PostWithAccount; onPublish: (id: 
                   className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"
                   onClick={() => setImgOpen(false)}
                 >
-                  <img
-                    src={post.image_url}
-                    alt="投稿画像"
-                    className="max-h-[90vh] max-w-[90vw] rounded-xl object-contain shadow-2xl"
-                    onClick={e => e.stopPropagation()}
-                  />
+                  <div
+                    ref={imgModalRef}
+                    role="dialog"
+                    aria-modal="true"
+                    aria-label="投稿画像のプレビュー"
+                    className="relative"
+                  >
+                    <img
+                      src={post.image_url}
+                      alt="投稿画像"
+                      className="max-h-[90vh] max-w-[90vw] rounded-xl object-contain shadow-2xl"
+                      onClick={e => e.stopPropagation()}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setImgOpen(false)}
+                      aria-label="閉じる"
+                      className="absolute right-2 top-2 rounded-full bg-white/90 p-1.5 text-gray-700 shadow hover:bg-white focus-visible:outline-2 focus-visible:outline-[#00A3BF]"
+                    >
+                      <X className="h-4 w-4" />
+                    </button>
+                  </div>
                 </div>
               )}
             </>
           ) : (
             <div className="flex h-36 w-36 flex-col items-center justify-center bg-gray-50">
-              <ImageIcon className="h-6 w-6 text-gray-200" />
-              <span className="mt-1 text-[10px] text-gray-300">なし</span>
+              <ImageIcon className="h-6 w-6 text-gray-300" />
+              <span className="mt-1 text-[10px] text-gray-500">なし</span>
             </div>
           )}
         </div>
@@ -76,15 +101,15 @@ function PostCard({ post, onPublish }: { post: PostWithAccount; onPublish: (id: 
               {label}
             </span>
             {post.account?.name && (
-              <span className="flex items-center gap-1 text-[11px] text-gray-400">
+              <span className="flex items-center gap-1 text-[11px] text-gray-500">
                 <User className="h-3 w-3" />
                 {post.account.name}
               </span>
             )}
             {post.theme && (
-              <span className="truncate text-[11px] text-gray-400">#{post.theme}</span>
+              <span className="truncate text-[11px] text-gray-500">#{post.theme}</span>
             )}
-            <span className="ml-auto text-[11px] text-gray-400">
+            <span className="ml-auto text-[11px] text-gray-500">
               {formatDate(post.created_at)}
             </span>
           </div>
@@ -133,15 +158,29 @@ export default function LogsPage() {
   const [loading, setLoading] = useState(true)
   const [filter, setFilter] = useState<'all' | 'draft' | 'posted' | 'failed'>('all')
 
-  async function load() {
+  async function load(signal?: AbortSignal) {
     setLoading(true)
-    fetch('/api/posts')
-      .then(r => r.json())
-      .then(setPosts)
-      .finally(() => setLoading(false))
+    try {
+      const res = await fetch('/api/posts', { signal })
+      if (!res.ok) throw new Error(`posts HTTP ${res.status}`)
+      const data = await res.json() as PostWithAccount[]
+      setPosts(Array.isArray(data) ? data : [])
+    } catch (e) {
+      if (e instanceof DOMException && e.name === 'AbortError') return
+      console.error('[logs load]', e instanceof Error ? e.message : 'unknown')
+      toast.error('履歴の読み込みに失敗しました')
+    } finally {
+      if (!signal?.aborted) setLoading(false)
+    }
   }
 
-  useEffect(() => { load() }, [])
+  useEffect(() => {
+    const ctrl = new AbortController()
+    void load(ctrl.signal)
+    return () => ctrl.abort()
+    // 初回マウントのみ
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   async function handlePublish(postId: string) {
     const ok = await confirm({
@@ -179,8 +218,10 @@ export default function LogsPage() {
           <p className="mt-0.5 text-sm text-gray-500">生成・投稿した全コンテンツの履歴</p>
         </div>
         <button
-          onClick={load}
-          className="flex items-center gap-1 text-sm text-gray-400 hover:text-gray-600 transition-colors"
+          onClick={() => load()}
+          disabled={loading}
+          aria-label="履歴を再読み込み"
+          className="flex items-center gap-1 text-sm text-gray-500 hover:text-gray-700 focus-visible:outline-2 focus-visible:outline-[#00A3BF] transition-colors disabled:opacity-50"
         >
           <RefreshCw className={cx('h-4 w-4', loading && 'animate-spin')} />
           更新
@@ -217,10 +258,10 @@ export default function LogsPage() {
       ) : filtered.length === 0 ? (
         <Card className="py-14 text-center">
           <div className="mx-auto mb-3 flex h-11 w-11 items-center justify-center rounded-lg bg-gray-100">
-            <FileText className="h-5 w-5 text-gray-400" />
+            <FileText className="h-5 w-5 text-gray-500" />
           </div>
           <p className="text-sm font-medium text-gray-500">履歴がありません</p>
-          <p className="mt-0.5 text-xs text-gray-400">投稿を生成するとここに表示されます</p>
+          <p className="mt-0.5 text-xs text-gray-500">投稿を生成するとここに表示されます</p>
         </Card>
       ) : (
         <div className="space-y-3">

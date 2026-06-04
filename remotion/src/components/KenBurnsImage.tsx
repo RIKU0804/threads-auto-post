@@ -1,19 +1,26 @@
 import { AbsoluteFill, Img, interpolate, useCurrentFrame } from "remotion";
 
+// Ken Burns の動きパターン。シーンごとに循環させて単調さを消す。
+export type KenBurnsMotion = "zoom-in" | "zoom-out" | "pan-left" | "pan-right";
+
 interface KenBurnsImageProps {
   src: string;
   // シーンの長さ (frames)。これを使って 0..1 の進行度を出す。
   durationInFrames: number;
-  // 偶数シーンと奇数シーンでズーム方向を変えると単調さが消える。
-  direction?: "in" | "out";
+  // 動きパターン。SceneBlock が index から循環で渡す。
+  motion?: KenBurnsMotion;
 }
 
-const SCALE_DELTA = 0.06; // 6% ズーム。やりすぎないのが TikTok 受けする。
+// 12% ズーム。6% だとほぼ動いて見えなかったので強めに。
+// それでも TikTok 受けする「酔わない」範囲に収める。
+const SCALE_DELTA = 0.12;
+// パン量 (%)。ズームと合わせて「写真がただ拡大してるだけ」感を消す。
+const PAN_DELTA = 5;
 
 export function KenBurnsImage({
   src,
   durationInFrames,
-  direction = "in",
+  motion = "zoom-in",
 }: KenBurnsImageProps): JSX.Element {
   const frame = useCurrentFrame();
   const progress = interpolate(frame, [0, durationInFrames], [0, 1], {
@@ -21,16 +28,46 @@ export function KenBurnsImage({
     extrapolateLeft: "clamp",
   });
 
-  const startScale = direction === "in" ? 1.0 : 1.0 + SCALE_DELTA;
-  const endScale = direction === "in" ? 1.0 + SCALE_DELTA : 1.0;
-  const scale = interpolate(progress, [0, 1], [startScale, endScale]);
+  // パターンごとに scale と translate の開始/終了を決める。
+  // どのパターンも常に最低 SCALE_DELTA ぶんはズームして "動いてる感" を担保。
+  let startScale: number;
+  let endScale: number;
+  let startX = 0;
+  let endX = 0;
+  let startY = 0;
+  let endY = 0;
 
-  // 横方向にもごく僅かに動かす (3% 程度) と「写真がただ拡大してるだけ」感が消える。
-  const translateX = interpolate(
-    progress,
-    [0, 1],
-    [direction === "in" ? -1 : 1, direction === "in" ? 1 : -1],
-  );
+  switch (motion) {
+    case "zoom-out":
+      startScale = 1.0 + SCALE_DELTA;
+      endScale = 1.0;
+      break;
+    case "pan-left":
+      // 少し寄った状態を保ちつつ左へ流す
+      startScale = 1.0 + SCALE_DELTA;
+      endScale = 1.0 + SCALE_DELTA * 0.5;
+      startX = PAN_DELTA;
+      endX = -PAN_DELTA;
+      break;
+    case "pan-right":
+      startScale = 1.0 + SCALE_DELTA;
+      endScale = 1.0 + SCALE_DELTA * 0.5;
+      startX = -PAN_DELTA;
+      endX = PAN_DELTA;
+      break;
+    case "zoom-in":
+    default:
+      startScale = 1.0;
+      endScale = 1.0 + SCALE_DELTA;
+      // ズームインは縦にもごくわずか動かす
+      startY = 2;
+      endY = -2;
+      break;
+  }
+
+  const scale = interpolate(progress, [0, 1], [startScale, endScale]);
+  const translateX = interpolate(progress, [0, 1], [startX, endX]);
+  const translateY = interpolate(progress, [0, 1], [startY, endY]);
 
   return (
     <AbsoluteFill style={{ overflow: "hidden", backgroundColor: "#000" }}>
@@ -40,7 +77,7 @@ export function KenBurnsImage({
           width: "100%",
           height: "100%",
           objectFit: "cover",
-          transform: `scale(${scale}) translateX(${translateX}%)`,
+          transform: `scale(${scale}) translate(${translateX}%, ${translateY}%)`,
           transformOrigin: "center center",
         }}
       />

@@ -2,6 +2,7 @@
 
 import { createContext, useCallback, useContext, useState } from 'react'
 import { AlertTriangle } from 'lucide-react'
+import { useModalA11y } from '@/lib/hooks/use-modal-a11y'
 
 interface ConfirmOptions {
   title?: string
@@ -34,8 +35,10 @@ export function ConfirmProvider({ children }: { children: React.ReactNode }) {
   }, [])
 
   const close = useCallback((result: boolean) => {
+    // resolve は setState updater の外で呼ぶ（updater は StrictMode/並行レンダーで
+    // 複数回実行されうるため、中で副作用を起こすと resolve が二重に呼ばれる）。
     setPending(prev => {
-      prev?.resolve(result)
+      if (prev) prev.resolve(result)
       return null
     })
   }, [])
@@ -44,49 +47,68 @@ export function ConfirmProvider({ children }: { children: React.ReactNode }) {
     <ConfirmContext.Provider value={confirm}>
       {children}
       {pending && (
-        <div
-          className="fixed inset-0 z-[110] flex items-center justify-center p-4"
-          role="dialog"
-          aria-modal="true"
-          onKeyDown={e => { if (e.key === 'Escape') close(false) }}
-        >
-          <div className="absolute inset-0 bg-black/40" onClick={() => close(false)} />
-          <div className="relative w-full max-w-sm rounded-xl bg-white p-5 shadow-2xl ring-1 ring-black/5">
-            <div className="flex items-start gap-3">
-              <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full ${
-                pending.opts.destructive ? 'bg-red-50' : 'bg-[#E9F7F9]'
-              }`}>
-                <AlertTriangle className={`h-4 w-4 ${pending.opts.destructive ? 'text-red-500' : 'text-[#00A3BF]'}`} />
-              </div>
-              <div className="flex-1">
-                {pending.opts.title && (
-                  <p className="text-sm font-semibold text-gray-900">{pending.opts.title}</p>
-                )}
-                <p className="mt-0.5 text-sm leading-relaxed text-gray-600">{pending.opts.message}</p>
-              </div>
-            </div>
-            <div className="mt-5 flex justify-end gap-2">
-              <button
-                onClick={() => close(false)}
-                className="rounded-md px-3.5 py-2 text-sm font-medium text-gray-600 transition hover:bg-gray-100"
-              >
-                {pending.opts.cancelLabel ?? 'キャンセル'}
-              </button>
-              <button
-                autoFocus
-                onClick={() => close(true)}
-                className={`rounded-md px-3.5 py-2 text-sm font-semibold text-white transition ${
-                  pending.opts.destructive
-                    ? 'bg-red-600 hover:bg-red-700'
-                    : 'bg-[#00A3BF] hover:bg-[#008CA8]'
-                }`}
-              >
-                {pending.opts.confirmLabel ?? 'OK'}
-              </button>
-            </div>
-          </div>
-        </div>
+        <ConfirmDialogView opts={pending.opts} onClose={close} />
       )}
     </ConfirmContext.Provider>
+  )
+}
+
+/**
+ * 確認ダイアログ本体。useModalA11y を使うため、pending が存在するときだけ
+ * マウントされる独立コンポーネントに分離する（フックは条件付きで呼べないため）。
+ */
+function ConfirmDialogView({
+  opts,
+  onClose,
+}: {
+  opts: ConfirmOptions
+  onClose: (result: boolean) => void
+}) {
+  // Esc / フォーカストラップ / スクロールロックを共通フックで担保
+  const modalRef = useModalA11y<HTMLDivElement>(true, () => onClose(false))
+
+  return (
+    <div className="fixed inset-0 z-[110] flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-black/40" onClick={() => onClose(false)} />
+      <div
+        ref={modalRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={opts.title ? 'confirm-title' : undefined}
+        className="relative w-full max-w-sm rounded-xl bg-white p-5 shadow-2xl ring-1 ring-black/5"
+      >
+        <div className="flex items-start gap-3">
+          <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full ${
+            opts.destructive ? 'bg-red-50' : 'bg-[#E9F7F9]'
+          }`}>
+            <AlertTriangle className={`h-4 w-4 ${opts.destructive ? 'text-red-500' : 'text-[#00A3BF]'}`} />
+          </div>
+          <div className="flex-1">
+            {opts.title && (
+              <p id="confirm-title" className="text-sm font-semibold text-gray-900">{opts.title}</p>
+            )}
+            <p className="mt-0.5 text-sm leading-relaxed text-gray-600">{opts.message}</p>
+          </div>
+        </div>
+        <div className="mt-5 flex justify-end gap-2">
+          <button
+            onClick={() => onClose(false)}
+            className="rounded-md px-3.5 py-2 text-sm font-medium text-gray-600 transition hover:bg-gray-100"
+          >
+            {opts.cancelLabel ?? 'キャンセル'}
+          </button>
+          <button
+            onClick={() => onClose(true)}
+            className={`rounded-md px-3.5 py-2 text-sm font-semibold text-white transition ${
+              opts.destructive
+                ? 'bg-red-600 hover:bg-red-700'
+                : 'bg-[#00A3BF] hover:bg-[#008CA8]'
+            }`}
+          >
+            {opts.confirmLabel ?? 'OK'}
+          </button>
+        </div>
+      </div>
+    </div>
   )
 }

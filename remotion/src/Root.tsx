@@ -3,22 +3,14 @@ import type { CalculateMetadataFunction } from "remotion";
 import { ShortVideoMain } from "./compositions/ShortVideoMain";
 import { shortVideoPropsSchema, type ShortVideoProps } from "./schema";
 import { SAMPLE_PROPS } from "./sample-props";
+import { FPS, WIDTH, HEIGHT, computeTotalDurationSec } from "./timing";
 
-const FPS = 30;
-const WIDTH = 1080;
-const HEIGHT = 1920;
-
-const TITLE_DURATION_SEC = 1.5;
-const TAIL_FADE_SEC = 0.5;
-
-// scenes[].duration の合計 + (title? 1.5 : 0) + 0.5 (tail) を frames に変換。
+// 総尺 = computeTotalDurationSec(props) を frames に変換。
+// 尺の定義は timing.ts に集約し、ShortVideoMain の内部描画と一致させる。
 const calculateMetadata: CalculateMetadataFunction<ShortVideoProps> = ({
   props,
 }) => {
-  const hasTitle = props.title.trim().length > 0;
-  const sceneSec = props.scenes.reduce((sum, s) => sum + s.duration, 0);
-  const totalSec =
-    sceneSec + (hasTitle ? TITLE_DURATION_SEC : 0) + TAIL_FADE_SEC;
+  const totalSec = computeTotalDurationSec(props.scenes);
   const durationInFrames = Math.max(1, Math.round(totalSec * FPS));
   return { durationInFrames };
 };

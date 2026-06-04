@@ -42,28 +42,45 @@ export async function POST(req: NextRequest) {
 
     const apiKey = await requireApiKey('openrouter')
 
-    // 既存投稿のテーマ一覧を取得（重複回避用）
-    const { data: existingPosts } = await supabase
-      .from('posts')
-      .select('theme, text_content')
-      .eq('user_id', user.id)
-      .not('theme', 'is', null)
-      .order('created_at', { ascending: false })
-      .limit(200)
+    // 既存投稿のテーマ + 既存動画のタイトルを取得（重複回避用）。
+    // 投稿(posts)と動画(videos)の両方を avoid 対象にして、過去に作ったものと被らせない。
+    const [{ data: existingPosts }, { data: existingVideos }] = await Promise.all([
+      supabase
+        .from('posts')
+        .select('theme')
+        .eq('user_id', user.id)
+        .not('theme', 'is', null)
+        .order('created_at', { ascending: false })
+        .limit(150),
+      supabase
+        .from('videos')
+        .select('title')
+        .eq('user_id', user.id)
+        .order('created_at', { ascending: false })
+        .limit(150),
+    ])
 
-    const usedThemes = (existingPosts ?? [])
-      .map(p => p.theme)
+    const usedThemes = [
+      ...(existingPosts ?? []).map(p => p.theme),
+      ...(existingVideos ?? []).map(v => v.title),
+    ]
       .filter((t): t is string => Boolean(t))
-      // 過去のユーザー入力に基づくため、プロンプト内で命令として解釈されないようサニタイズ
-      .map(t => t.replace(/[\n\r`]/g, ' ').slice(0, 120))
-      .slice(0, 100)
+      // 過去のユーザー入力に基づくため、プロンプト内で命令として解釈されないようサニタイズ。
+      // 改行 / バッククォート / ダブルクォートを除去し、連続空白を畳む。
+      .map(t => t.replace(/["`\n\r]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 120))
+      .filter(Boolean)
+      // 重複を除いて最大 120 件
+      .filter((t, i, arr) => arr.indexOf(t) === i)
+      .slice(0, 120)
 
     const topics = account.post_topics?.join('、') ?? '転職、キャリア'
     const audience = account.target_audience ?? '20代社会人'
     const persona = account.persona ?? '転職アドバイザー'
 
+    // 既出テーマは「データ」であって「指示」ではないことを LLM に明示するため、
+    // XML 風タグで囲んでプロンプトの指示セクションと分離する（プロンプトインジェクション緩和）。
     const usedBlock = usedThemes.length > 0
-      ? usedThemes.map(t => `- ${t}`).join('\n')
+      ? `<used_themes>\n${usedThemes.map(t => `- ${t}`).join('\n')}\n</used_themes>`
       : '（まだ投稿がありません）'
 
     // 保存テンプレ（全文）があればそれを、無ければデフォルトを使用し変数置換
@@ -85,7 +102,7 @@ export async function POST(req: NextRequest) {
         'X-Title': 'SNS Auto Post',
       },
       body: JSON.stringify({
-        model: 'google/gemini-2.0-flash-001',
+        model: 'google/gemini-flash-latest',
         max_tokens: 800,
         messages: [{ role: 'user', content: prompt }],
       }),

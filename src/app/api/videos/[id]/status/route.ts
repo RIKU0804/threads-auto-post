@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createServerSupabaseClient } from '@/lib/supabase'
 import type { Scene, VideoStatus } from '@/types/database'
 
-type Step = 'script' | 'images' | 'voice' | 'render' | 'done' | 'failed'
+type Step = 'script' | 'images' | 'voice' | 'render' | 'done' | 'needs_render' | 'failed'
 
 interface SceneProgress {
   completed: number
@@ -16,7 +16,12 @@ interface StatusResponse {
   error?: string
 }
 
-function deriveStep(status: VideoStatus): Step {
+/**
+ * status だけでは「ready だが最終 MP4 がまだ無い（編集/声変更後で再レンダー待ち）」を
+ * 区別できないため、hasFinalVideo も渡して step を導出する。
+ * ready かつ final 無しは 'needs_render'（= 完了ではない）として扱う。
+ */
+function deriveStep(status: VideoStatus, hasFinalVideo: boolean): Step {
   switch (status) {
     case 'draft':
     case 'generating_script':
@@ -28,7 +33,7 @@ function deriveStep(status: VideoStatus): Step {
     case 'rendering':
       return 'render'
     case 'ready':
-      return 'done'
+      return hasFinalVideo ? 'done' : 'needs_render'
     case 'failed':
       return 'failed'
   }
@@ -46,7 +51,7 @@ export async function GET(
 
     const { data: video, error } = await supabase
       .from('videos')
-      .select('id, status, error_message, scenes:scenes(image_url, audio_url)')
+      .select('id, status, error_message, final_video_url, scenes:scenes(image_url, audio_url)')
       .eq('id', id)
       .eq('user_id', user.id)
       .maybeSingle()
@@ -57,7 +62,8 @@ export async function GET(
     }
 
     const status = video.status as VideoStatus
-    const step = deriveStep(status)
+    const hasFinalVideo = !!video.final_video_url
+    const step = deriveStep(status, hasFinalVideo)
     const scenes = (Array.isArray(video.scenes) ? video.scenes : []) as Pick<Scene, 'image_url' | 'audio_url'>[]
 
     const body: StatusResponse = { status, step }

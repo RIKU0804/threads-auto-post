@@ -124,6 +124,8 @@ export interface Video {
   heygen_avatar_id: string | null
   heygen_voice_id: string | null
   heygen_video_id: string | null
+  elevenlabs_voice_id: string | null
+  generation_started_at: string | null
   published_at: string | null
   error_message: string | null
   created_at: string
@@ -150,6 +152,11 @@ export interface VideoWithScenes extends Video {
 
 export interface AccountPromptSettings {
   account_id: string
+  // 全文プロンプト（20260518_prompt_fulltext.sql で追加）。null なら *_default を使う。
+  text_prompt: string | null
+  image_prompt: string | null
+  themes_prompt: string | null
+  // 旧: 追記方式の差分プロンプト（後方互換のため保持）
   text_extra: string | null
   image_extra: string | null
   themes_extra: string | null

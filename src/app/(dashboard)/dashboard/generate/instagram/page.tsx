@@ -188,20 +188,31 @@ export default function InstagramGeneratePage() {
   }, [selectedAccount])
 
   useEffect(() => {
-    Promise.all([
-      fetch('/api/accounts').then(r => r.json()) as Promise<Account[]>,
-      fetch('/api/reference-accounts').then(r => r.json()) as Promise<ReferenceAccount[]>,
-    ])
-      .then(([accs, refs]) => {
-        const igAccounts = (Array.isArray(accs) ? accs : []).filter(a => a.platform === 'instagram')
+    const ctrl = new AbortController()
+    async function loadInitial() {
+      try {
+        const [accsRes, refsRes] = await Promise.all([
+          fetch('/api/accounts', { signal: ctrl.signal }),
+          fetch('/api/reference-accounts', { signal: ctrl.signal }),
+        ])
+        const accsRaw: unknown = accsRes.ok ? await accsRes.json() : []
+        const refsRaw: unknown = refsRes.ok ? await refsRes.json() : []
+        if (ctrl.signal.aborted) return
+        const accs = Array.isArray(accsRaw) ? (accsRaw as Account[]) : []
+        const refs = Array.isArray(refsRaw) ? (refsRaw as ReferenceAccount[]) : []
+        const igAccounts = accs.filter(a => a.platform === 'instagram')
         setAccounts(igAccounts)
         if (igAccounts.length > 0) setSelectedAccount(igAccounts[0].id)
-        setReferenceAccounts(Array.isArray(refs) ? refs : [])
-      })
-      .catch(e => {
-        console.error('[generate/instagram] initial load failed', e)
+        setReferenceAccounts(refs)
+      } catch (e) {
+        if (e instanceof DOMException && e.name === 'AbortError') return
+        console.error('[generate/instagram] initial load failed', e instanceof Error ? e.message : 'unknown')
         toast.error('アカウント情報の取得に失敗しました。再読み込みしてください。')
-      })
+      }
+    }
+    void loadInitial()
+    return () => ctrl.abort()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   const isDemoMode = !selectedAccount

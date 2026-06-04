@@ -4,7 +4,8 @@ import { useEffect, useState } from 'react'
 import { X, Send } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
 import { useToast } from '@/components/ui/Toast'
-import type { Account } from '@/types/database'
+import { useModalA11y } from '@/lib/hooks/use-modal-a11y'
+import type { VideoAccount } from './VideoDetail'
 
 type Privacy = 'PUBLIC_TO_EVERYONE' | 'MUTUAL_FOLLOW_FRIENDS' | 'FOLLOWER_OF_CREATOR' | 'SELF_ONLY'
 
@@ -19,7 +20,7 @@ interface PublishTikTokModalProps {
   open: boolean
   onClose: () => void
   videoId: string
-  accounts: Account[]
+  accounts: VideoAccount[]
   defaultCaption: string
   /** 公開成功時に呼ばれる */
   onPublished: () => void
@@ -41,6 +42,7 @@ export function PublishTikTokModal({
   const [disableDuet, setDisableDuet] = useState(false)
   const [disableStitch, setDisableStitch] = useState(false)
   const [submitting, setSubmitting] = useState(false)
+  const modalRef = useModalA11y<HTMLDivElement>(open, () => { if (!submitting) onClose() })
 
   useEffect(() => {
     if (open) {
@@ -89,11 +91,26 @@ export function PublishTikTokModal({
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-3" role="dialog" aria-modal="true">
-      <div className="w-full max-w-lg rounded-xl bg-white shadow-lg">
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-3"
+      onClick={(e) => { if (e.target === e.currentTarget && !submitting) onClose() }}
+    >
+      <div
+        ref={modalRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="publish-tiktok-title"
+        className="w-full max-w-lg rounded-xl bg-white shadow-lg"
+      >
         <div className="flex items-center justify-between border-b border-gray-200 p-4">
-          <h2 className="text-sm font-semibold text-gray-900">TikTok に公開</h2>
-          <button type="button" onClick={onClose} disabled={submitting} className="text-gray-400 hover:text-gray-600">
+          <h2 id="publish-tiktok-title" className="text-sm font-semibold text-gray-900">TikTok に公開</h2>
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={submitting}
+            aria-label="閉じる"
+            className="rounded-md p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600 focus-visible:outline-2 focus-visible:outline-[#00A3BF]"
+          >
             <X className="h-4 w-4" />
           </button>
         </div>

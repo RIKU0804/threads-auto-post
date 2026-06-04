@@ -39,7 +39,14 @@ export async function POST(
       return NextResponse.json({ error: 'failed 状態の動画のみ再開できます' }, { status: 400 })
     }
 
-    await restartFailedVideo(id)
+    const acquired = await restartFailedVideo(id)
+    if (!acquired) {
+      // 別リクエストが既に restart 中。重複 enqueue を避ける。
+      return NextResponse.json(
+        { error: '既に再開処理が走っています。少し待ってから一覧をリロードしてください', code: 'ALREADY_RESTARTING' },
+        { status: 409 },
+      )
+    }
 
     // pipeline 再投入（fire-and-forget）
     void enqueueVideoPipeline(id, {

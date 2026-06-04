@@ -11,6 +11,8 @@ import { SelectNative } from '@/components/ui/Select'
 import { useToast } from '@/components/ui/Toast'
 import { LocalOnlyBanner } from '@/components/video/LocalOnlyBanner'
 import { useHeygenList } from '@/lib/hooks/use-heygen-list'
+import { useThemeSuggestions } from '@/lib/hooks/use-theme-suggestions'
+import { VOICE_PRESETS, DEFAULT_VOICE_ID } from '@/lib/video/voice-presets'
 import type { Video, GenerationMode, VoiceSource } from '@/types/database'
 
 const MIN_THEME_LEN = 3
@@ -57,7 +59,7 @@ function SectionLabel({
       </p>
       {hint && (
         <span className="relative inline-flex group">
-          <Info className="h-3 w-3 text-gray-400" />
+          <Info className="h-3 w-3 text-gray-500" />
           <span className="pointer-events-none absolute left-1/2 top-full z-10 mt-1 hidden -translate-x-1/2 whitespace-nowrap rounded bg-gray-900 px-2 py-1 text-[10px] font-normal normal-case text-white group-hover:block">
             {hint}
           </span>
@@ -70,7 +72,7 @@ function SectionLabel({
 // useSearchParams() を使うため Suspense でラップして CSR bailout を許容する
 export default function NewVideoPage() {
   return (
-    <Suspense fallback={<div className="p-6 text-sm text-gray-400">読み込み中...</div>}>
+    <Suspense fallback={<div className="p-6 text-sm text-gray-500">読み込み中...</div>}>
       <NewVideoPageInner />
     </Suspense>
   )
@@ -91,6 +93,11 @@ function NewVideoPageInner() {
   const [voiceSource, setVoiceSource] = useState<VoiceSource>('elevenlabs')
   const [heygenAvatarId, setHeygenAvatarId] = useState('')
   const [heygenVoiceId, setHeygenVoiceId] = useState('')
+  const [elevenlabsVoiceId, setElevenlabsVoiceId] = useState<string>(DEFAULT_VOICE_ID)
+
+  // AI テーマ提案 (動画作成にはアカウント選択が無いので '' = デモペルソナで提案)。
+  // API 側で過去の投稿・動画タイトルを避けて生成する。
+  const { themeSuggestions, suggestLoading, suggestThemes } = useThemeSuggestions('')
 
   const { state: avatarsState, refetch: refetchAvatars } = useHeygenList<HeygenAvatar>({
     url: '/api/heygen/avatars',
@@ -157,12 +164,16 @@ function NewVideoPageInner() {
         voiceSource?: VoiceSource
         heygenAvatarId?: string
         heygenVoiceId?: string
+        elevenlabsVoiceId?: string
       } = {
         theme: theme.trim(),
         title: title.trim() || undefined,
         sceneCount,
         targetDurationSec,
         generationMode: mode,
+      }
+      if (mode === 'remotion') {
+        payload.elevenlabsVoiceId = elevenlabsVoiceId
       }
       if (mode === 'heygen_avatar') {
         payload.voiceSource = voiceSource
@@ -176,10 +187,13 @@ function NewVideoPageInner() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       })
-      const data = (await res.json()) as { video?: Video; error?: string; code?: string; details?: unknown }
+      const data = (await res.json()) as { video?: Video; error?: string; code?: string; provider?: string; details?: unknown }
       if (!res.ok || data.error || !data.video) {
         if (data.code === 'RATE_LIMITED') {
           toast.error('1時間に5本までです。少し時間を空けて再度お試しください')
+        } else if (data.code === 'MISSING_API_KEY') {
+          // 設定ページへのリンクをユーザーに見せる
+          toast.error(`${data.error ?? 'API キーが未登録です'} → /dashboard/settings から登録してください`)
         } else {
           toast.error(data.error ?? '動画の作成に失敗しました')
         }
@@ -209,7 +223,7 @@ function NewVideoPageInner() {
       <div className="mb-6">
         <Link
           href="/dashboard/videos"
-          className="mb-2 inline-flex items-center gap-1 text-sm text-gray-400 hover:text-gray-600"
+          className="mb-2 inline-flex items-center gap-1 text-sm text-gray-500 hover:text-gray-600"
         >
           <ChevronLeft className="h-4 w-4" />
           動画一覧に戻る
@@ -266,23 +280,45 @@ function NewVideoPageInner() {
             aria-invalid={themeError}
             aria-describedby="theme-help"
           />
-          <div id="theme-help" className="mt-1 flex items-center justify-between text-[11px] text-gray-400">
+          <div id="theme-help" className="mt-1 flex items-center justify-between text-[11px] text-gray-500">
             <span>{themeError ? `${MIN_THEME_LEN} 文字以上で入力してください` : `${MIN_THEME_LEN}〜${MAX_THEME_LEN} 文字`}</span>
             <span>{theme.length} / {MAX_THEME_LEN}</span>
           </div>
-          {/* テーマのクイック例 */}
-          <div className="mt-2 flex flex-wrap gap-1.5">
-            {THEME_EXAMPLES.map((ex) => (
-              <button
-                key={ex}
-                type="button"
-                onClick={() => setTheme(ex)}
-                disabled={loading}
-                className="rounded-full border border-gray-200 bg-gray-50 px-2.5 py-0.5 text-[11px] text-gray-600 hover:border-[#00A3BF] hover:bg-[#00A3BF]/5 hover:text-[#006F83]"
-              >
-                {ex}
-              </button>
-            ))}
+          {/* テーマ提案: AI生成 + クイック例 */}
+          <div className="mt-2">
+            <button
+              type="button"
+              onClick={suggestThemes}
+              disabled={loading || suggestLoading}
+              aria-busy={suggestLoading}
+              className="inline-flex items-center gap-1 rounded-md border border-[#00A3BF]/40 bg-[#E9F7F9] px-2.5 py-1 text-[11px] font-medium text-[#006F83] hover:bg-[#D5F0F4] disabled:opacity-50"
+            >
+              {suggestLoading ? (
+                <Loader2 className="h-3 w-3 animate-spin" />
+              ) : (
+                <Sparkles className="h-3 w-3" />
+              )}
+              {suggestLoading ? '提案を生成中...' : 'AIでテーマを提案'}
+            </button>
+
+            <div className="mt-2 flex flex-wrap gap-1.5" aria-live="polite">
+              {(themeSuggestions.length > 0 ? themeSuggestions : THEME_EXAMPLES).map((ex) => (
+                <button
+                  key={ex}
+                  type="button"
+                  onClick={() => setTheme(ex)}
+                  disabled={loading}
+                  className="rounded-full border border-gray-200 bg-gray-50 px-2.5 py-0.5 text-[11px] text-gray-600 hover:border-[#00A3BF] hover:bg-[#00A3BF]/5 hover:text-[#006F83]"
+                >
+                  {ex}
+                </button>
+              ))}
+            </div>
+            {themeSuggestions.length > 0 && (
+              <p className="mt-1 text-[10px] text-gray-500">
+                過去の投稿・動画と被らないよう AI が提案しました（クリックで入力）
+              </p>
+            )}
           </div>
           <p className="mt-2 text-[11px] text-gray-500">
             🤖 生成された台本は完成後に1コマずつ書き換えられます。「とりあえず AI に書かせて気に入らない部分だけ直す」が基本ワークフローです。
@@ -325,7 +361,7 @@ function NewVideoPageInner() {
                 aria-label="シーン数"
                 className="w-full accent-[#00A3BF]"
               />
-              <div className="mt-1 flex justify-between text-[10px] text-gray-400">
+              <div className="mt-1 flex justify-between text-[10px] text-gray-500">
                 <span>3</span>
                 <span>10</span>
               </div>
@@ -349,11 +385,33 @@ function NewVideoPageInner() {
                 aria-label="目安尺 (秒)"
                 className="w-full accent-[#00A3BF]"
               />
-              <div className="mt-1 flex justify-between text-[10px] text-gray-400">
+              <div className="mt-1 flex justify-between text-[10px] text-gray-500">
                 <span>15 秒</span>
                 <span>90 秒</span>
               </div>
               <p className="mt-1 text-[11px] text-gray-500">1シーンあたり約 {secPerScene} 秒</p>
+            </div>
+
+            {/* ナレーション voice 選択 */}
+            <div>
+              <SectionLabel hint="ナレーションの声のトーン。あとから変更も可能">
+                ナレーションの声
+              </SectionLabel>
+              <SelectNative
+                aria-label="ナレーションの声"
+                value={elevenlabsVoiceId}
+                onChange={(e) => setElevenlabsVoiceId(e.target.value)}
+                disabled={loading}
+              >
+                {VOICE_PRESETS.map((v) => (
+                  <option key={v.id} value={v.id}>
+                    {v.label}（{v.tag}）
+                  </option>
+                ))}
+              </SelectNative>
+              <p className="mt-1 text-[11px] text-gray-500">
+                {VOICE_PRESETS.find((v) => v.id === elevenlabsVoiceId)?.description ?? ''}
+              </p>
             </div>
           </>
         )}

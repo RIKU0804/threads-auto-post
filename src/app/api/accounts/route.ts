@@ -2,6 +2,12 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createServerSupabaseClient } from '@/lib/supabase'
 import { fetchInstagramUserId } from '@/lib/platforms/instagram'
 import { getXMe } from '@/lib/platforms/x'
+import { encryptSecret } from '@/lib/crypto'
+
+/** null を保ったまま暗号化する小ヘルパー（空値は暗号化しない） */
+function encOrNull(v: string | null | undefined): string | null {
+  return v ? encryptSecret(v) : null
+}
 
 // 機密カラムは クライアントへ返さない（GET / POST レスポンス共通）
 const PUBLIC_ACCOUNT_COLUMNS = [
@@ -230,15 +236,17 @@ export async function POST(req: NextRequest) {
         tone,
         target_audience: targetAudience,
         post_topics: postTopics,
-        access_token: accessTokenRaw,
+        // 機密値は AES-256-GCM で暗号化して保存（読み取り側は decryptSecret）。
+        // 既存の平文レコードは decryptSecret の plaintext フォールバックで互換。
+        access_token: encOrNull(accessTokenRaw),
         threads_user_id: threadsUserId,
         threads_client_id: clientId,
-        threads_client_secret: clientSecret,
+        threads_client_secret: encOrNull(clientSecret),
         instagram_user_id: instagramUserId,
         x_user_id: xUserId,
-        x_api_key: xApiKey,
-        x_api_secret: xApiSecret,
-        x_access_secret: xAccessSecret,
+        x_api_key: encOrNull(xApiKey),
+        x_api_secret: encOrNull(xApiSecret),
+        x_access_secret: encOrNull(xAccessSecret),
         is_active: true,
       })
       .select(PUBLIC_ACCOUNT_COLUMNS)

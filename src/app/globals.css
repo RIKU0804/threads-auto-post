@@ -53,3 +53,20 @@ body {
   color: #1e293b;
   -webkit-font-smoothing: antialiased;
 }
+
+/*
+ * グローバル focus-visible リング。
+ * Tailwind v4 の `outline-hidden` が当たっている要素 (input/select) でも
+ * キーボードフォーカス時は必ず色つきリングを出して位置を可視化する。
+ * マウスクリックでは出ないので UI のうるささを抑えられる。
+ */
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+[role="button"]:focus-visible,
+[role="dialog"]:focus-visible {
+  outline: 2px solid #00A3BF;
+  outline-offset: 2px;
+}

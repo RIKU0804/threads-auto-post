@@ -4,7 +4,53 @@ import { createServerSupabaseClient } from '@/lib/supabase'
 import { checkRateLimit } from '@/lib/rate-limit'
 import { enqueueVideoPipeline } from '@/lib/video/jobs'
 import { videoCapability } from '@/lib/runtime-env'
-import type { GenerationMode } from '@/types/database'
+import { isValidVoiceId } from '@/lib/video/voice-presets'
+import { requireApiKey, MissingApiKeyError } from '@/lib/ai/api-keys'
+import { requireElevenLabsKey, MissingElevenLabsKeyError } from '@/lib/video/elevenlabs'
+import { requireHeyGenKey, MissingHeyGenKeyError } from '@/lib/video/heygen'
+import type { GenerationMode, VoiceSource } from '@/types/database'
+
+/**
+ * 動画パイプラインに必要な API キーを「動画生成を開始する前」に検証する。
+ *
+ * 既存挙動: pipeline 開始後に MissingApiKeyError が出て failed 状態になっていた。
+ * 失敗バナーから設定ページに行く導線も無く、ユーザーは延々 restart を押すしかなかった。
+ * → 開始前に 400 を返してフロント側で設定ページに誘導する。
+ */
+async function validateApiKeysForMode(
+  userId: string,
+  mode: GenerationMode,
+  voiceSource: VoiceSource | null,
+): Promise<{ ok: true } | { ok: false; provider: string; message: string }> {
+  try {
+    // 台本生成 (src/lib/video/script.ts) は remotion / heygen_avatar の
+    // どちらの経路でも OpenRouter を必須とする。ここで検証しないと OpenRouter
+    // 未設定でも動画レコード作成とジョブ投入まで進み、pipeline 側で failed に
+    // 落ちてしまう。両モード共通の前提として先頭で確認する。
+    await requireApiKey('openrouter')
+    if (mode === 'remotion') {
+      await requireApiKey('openai')
+      await requireElevenLabsKey(userId)
+    } else {
+      await requireHeyGenKey(userId)
+      if (voiceSource === 'elevenlabs') {
+        await requireElevenLabsKey(userId)
+      }
+    }
+    return { ok: true }
+  } catch (e: unknown) {
+    if (e instanceof MissingApiKeyError) {
+      return { ok: false, provider: e.provider, message: e.message }
+    }
+    if (e instanceof MissingElevenLabsKeyError) {
+      return { ok: false, provider: 'elevenlabs', message: e.message }
+    }
+    if (e instanceof MissingHeyGenKeyError) {
+      return { ok: false, provider: 'heygen', message: e.message }
+    }
+    throw e
+  }
+}
 
 const MAX_TITLE_LEN = 200
 const DEFAULT_LIMIT = 50
@@ -122,6 +168,9 @@ const PostBodySchema = z.object({
   voiceSource: z.enum(['elevenlabs', 'heygen']).optional(),
   heygenAvatarId: z.string().regex(HEYGEN_ID_REGEX).max(MAX_HEYGEN_ID_LEN).optional(),
   heygenVoiceId: z.string().regex(HEYGEN_ID_REGEX).max(MAX_HEYGEN_ID_LEN).optional(),
+  // Remotion 経路のナレーション voice (ElevenLabs)
+  // voice-presets.ts に登録された ID のみ許可
+  elevenlabsVoiceId: z.string().refine(isValidVoiceId, { message: '未知の voice_id です' }).optional(),
 }).strict()
   .superRefine((data, ctx) => {
     if (data.generationMode === 'heygen_avatar') {
@@ -202,6 +251,23 @@ export async function POST(req: NextRequest) {
       generationMode === 'heygen_avatar' && voiceSource === 'heygen'
         ? (parsed.data.heygenVoiceId ?? null)
         : null
+    // Remotion 経路でのみ ElevenLabs voice を保存する (HeyGen はアバター内蔵 voice)
+    const elevenlabsVoiceId =
+      generationMode === 'remotion' ? (parsed.data.elevenlabsVoiceId ?? null) : null
+
+    // 動画生成の事前検証: 必要な API キーが揃っているか
+    // 失敗すると pipeline で failed になる前に 400 で返す
+    const keyCheck = await validateApiKeysForMode(user.id, generationMode, voiceSource)
+    if (!keyCheck.ok) {
+      return NextResponse.json(
+        {
+          error: keyCheck.message,
+          code: 'MISSING_API_KEY',
+          provider: keyCheck.provider,
+        },
+        { status: 400 },
+      )
+    }
 
     // HeyGen mode はアバター動画として 1 本生成するため、scenes は使わない (持たない)。
     // Remotion mode 時のみ pipeline 側で scenes を作成する。
@@ -217,6 +283,9 @@ export async function POST(req: NextRequest) {
         voice_source: voiceSource,
         heygen_avatar_id: heygenAvatarId,
         heygen_voice_id: heygenVoiceId,
+        elevenlabs_voice_id: elevenlabsVoiceId,
+        // 進捗バーの経過時間計算で使う。リロード後もこの時刻からの差分を表示する
+        generation_started_at: new Date().toISOString(),
         // theme / sceneCount / targetDurationSec はパイプライン側でメタ参照する想定
         // videos テーブルに対応カラムがない場合は jobs 側に渡す
       })

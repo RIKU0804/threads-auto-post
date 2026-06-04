@@ -68,11 +68,11 @@ export function VideoCard({ video }: VideoCardProps) {
               {modeChip.label}
             </span>
             <VideoStatusBadge status={video.status} />
-            <span className="text-[11px] text-gray-400">{sceneCount} シーン</span>
+            <span className="text-[11px] text-gray-500">{sceneCount} シーン</span>
           </div>
           <h3 className="line-clamp-2 text-sm font-medium leading-snug text-gray-900">{video.title}</h3>
           <div className="flex items-center justify-between">
-            <p className="text-[11px] text-gray-400">{formatDate(video.created_at)}</p>
+            <p className="text-[11px] text-gray-500">{formatDate(video.created_at)}</p>
             <button
               type="button"
               onClick={handleDuplicate}

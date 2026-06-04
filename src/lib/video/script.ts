@@ -9,7 +9,7 @@ import { MissingApiKeyError } from '@/lib/ai/api-keys'
  * 入力テーマ → 構造化されたシーン配列を生成する。
  * 下流の画像生成（gpt-image-2）と ElevenLabs（音声）に橋渡しする中間表現。
  *
- * モデル: google/gemini-2.0-flash-001 (OpenRouter経由・高速・低コスト)
+ * モデル: google/gemini-flash-latest (OpenRouter経由・高速・低コスト)
  *   - text.ts と同じ経路で統一
  *   - strict json_schema は gemini 側で未サポートのため json_object モードを使い、
  *     応答は既存の手動バリデータ (validateScriptResponse) で正規化する
@@ -21,7 +21,7 @@ import { MissingApiKeyError } from '@/lib/ai/api-keys'
  *   - image_prompt   = 画像生成に渡すイラスト指示（英語推奨、no-text 指示込み）
  */
 
-const OPENROUTER_MODEL = 'google/gemini-2.0-flash-001'
+const OPENROUTER_MODEL = 'google/gemini-flash-latest'
 const REQUEST_TIMEOUT_MS = 60_000
 const MIN_SCENES = 3
 const DEFAULT_SCENE_COUNT_MIN = 5
@@ -30,6 +30,11 @@ const DEFAULT_TARGET_DURATION_SEC = 40
 // 日本語ナレーションは 5 字/秒 ≒ 1 秒あたり 5 文字、を経験的基準として採用
 // （ElevenLabs 日本語 voice の自然読み速度に近い）
 const JP_CHARS_PER_SECOND = 5
+// ElevenLabs の読み上げ速度 (elevenlabs.ts の DEFAULT_VOICE_SETTINGS.speed と一致させる)。
+// speed 1.15 だと同じ尺でより多く読めるため、文字数→秒の換算に反映しないと尺がズレる。
+const SPEED_FACTOR = 1.15
+// 実効読み上げ速度 (字/秒)
+const EFFECTIVE_CHARS_PER_SEC = JP_CHARS_PER_SECOND * SPEED_FACTOR
 const SCENE_MIN_DURATION = 2
 const SCENE_MAX_DURATION = 15
 
@@ -104,12 +109,18 @@ interface SystemPromptParams {
   targetDurationSec: number
   sceneCountMin: number
   sceneCountMax: number
+  /** 1 シーンあたりの目標ナレーション文字数 (尺厳守の要) */
+  perSceneChars: number
+  /** 全シーン合計ナレーション文字数の上限 */
+  totalCharBudget: number
 }
 
 function buildSystemPrompt({
   targetDurationSec,
   sceneCountMin,
   sceneCountMax,
+  perSceneChars,
+  totalCharBudget,
 }: SystemPromptParams): string {
   return `あなたは TikTok・Instagram Reels 向けショート動画の構成作家です。
 日本人視聴者を対象に、テーマから動画台本を JSON で生成します。
@@ -117,12 +128,12 @@ function buildSystemPrompt({
 【絶対ルール】
 1. 出力は scenes 配列に分割する。最低 ${MIN_SCENES} シーン、目安 ${sceneCountMin}〜${sceneCountMax} シーン。
 2. 各シーンには 3 つの独立したテキスト要素がある。役割を混同しないこと:
-   - caption_text: Remotion でオーバーレイ表示するテロップ。短く、1〜2行、視覚的に読みやすい日本語。装飾記号や絵文字は最小限。最大40字程度。
-   - narration_text: ElevenLabs が読み上げる TTS 原稿。自然な話し言葉。句読点（、。）で TTS が自然に間を取れるよう配置する。記号・括弧・絵文字は使わない。1シーンあたり日本語30〜200字目安。
+   - caption_text: Remotion でオーバーレイ表示するテロップ。画面に大きく出す1行のキャッチ。改行は絶対に入れない（1行で読み切れる長さにする）。理想 8〜16字、最大 22字。装飾記号・絵文字・句読点（、。）は使わず、体言止めや短い問いかけにする。
+   - narration_text: ElevenLabs が読み上げる TTS 原稿。自然な話し言葉。句読点（、。）で TTS が自然に間を取れるよう配置する。記号・括弧・絵文字は使わない。【尺厳守】1シーンあたり日本語 ${perSceneChars}字程度、最大でも ${perSceneChars + 10}字。長く書きすぎると動画が目安尺を大幅に超えてしまうので必ず守る。
    - image_prompt: 画像生成に渡す英語の画像生成プロンプト。イラストのみ。
 3. 【最重要】image_prompt には絶対に文字・テキスト・キャプション・ロゴ・タイポグラフィ要素を含めない。必ず英語で書き、末尾に "Illustration only. No text, no letters, no captions, no logos, no typography, no watermarks." を必ず明記する。スタイル指定（flat illustration, soft colors など）は OK。
-4. duration（秒）は narration_text の長さに比例。日本語は約 ${JP_CHARS_PER_SECOND} 文字/秒で読まれる想定で算出し、${SCENE_MIN_DURATION}〜${SCENE_MAX_DURATION} 秒に収める。
-5. 全シーンの duration 合計は目安 ${targetDurationSec} 秒前後。
+4. duration（秒）は narration_text の長さに比例。読み上げは約 ${EFFECTIVE_CHARS_PER_SEC.toFixed(1)} 文字/秒で算出し、${SCENE_MIN_DURATION}〜${SCENE_MAX_DURATION} 秒に収める。
+5. 【最重要・尺厳守】全シーンの narration_text の合計文字数は ${totalCharBudget}字以内に必ず収める。これが動画全体の長さ（目安 ${targetDurationSec}秒）を決める最重要の制約。各シーンを短く保ち、合計が超えそうならシーン数を減らすか各シーンをさらに短くする。
 6. script フィールドには動画全体の台本を markdown で要約（レビュー用）。caption と narration の流れがわかる形にする。
 7. title は視聴者がスクロールを止めたくなる短く強いフック。最大80字。
 
@@ -139,8 +150,8 @@ function buildSystemPrompt({
   "script": "string (markdown可)",
   "scenes": [
     {
-      "caption_text": "string (最大40字)",
-      "narration_text": "string (30〜200字)",
+      "caption_text": "string (1行・改行なし・最大22字)",
+      "narration_text": "string (尺厳守。1シーン短く)",
       "image_prompt": "string (英語、文字なし指示込み)",
       "duration": 5.0
     }
@@ -205,10 +216,38 @@ function extractJsonObject(raw: string): unknown | null {
 }
 
 /**
+ * ナレーションを最大文字数に収まるよう切り詰める（尺の暴走を止める後段クランプ）。
+ * プロンプトで文字数を指示しても AI が無視して長文化することがあるため、ここで確実に制限する。
+ * 文の途中で切れて不自然にならないよう、上限以内の最後の句点（。！？）までで切る。
+ * 句点が無ければ上限文字でハードカット。
+ */
+function clampNarration(text: string, maxChars: number): string {
+  const trimmed = text.trim()
+  if (trimmed.length <= maxChars) return trimmed
+  const head = trimmed.slice(0, maxChars)
+  // 上限以内の最後の文末記号を探す
+  const lastSentenceEnd = Math.max(
+    head.lastIndexOf('。'),
+    head.lastIndexOf('！'),
+    head.lastIndexOf('？'),
+  )
+  if (lastSentenceEnd >= Math.floor(maxChars * 0.5)) {
+    // 半分以上の位置に句点があればそこで切る（短くなりすぎない）
+    return head.slice(0, lastSentenceEnd + 1)
+  }
+  return head
+}
+
+/**
  * OpenRouter 応答を VideoScriptDraft に検証・正規化する。
  * Zod が無いプロジェクトのため、明示的な手動バリデーションで型と制約を確認する。
+ * maxCharsPerScene: ナレーション 1 シーンの最大文字数（尺クランプ用）。
  */
-function validateScriptResponse(parsed: unknown, rawText: string): VideoScriptDraft {
+function validateScriptResponse(
+  parsed: unknown,
+  rawText: string,
+  maxCharsPerScene: number,
+): VideoScriptDraft {
   if (!isObject(parsed)) {
     throw new ScriptGenerationError(
       `AI 応答がオブジェクトではありません: ${snippet(rawText)}`,
@@ -268,22 +307,28 @@ function validateScriptResponse(parsed: unknown, rawText: string): VideoScriptDr
       )
     }
 
-    // ナレーション長から再推定し、モデルの値とのズレが大きい場合は補正値で上書き
+    // 尺クランプ: ナレーションを最大文字数で切り詰めてから尺を計算する。
+    const narration = clampNarration(s.narration_text, maxCharsPerScene)
+
+    // ナレーション長から再推定し、モデルの値とのズレが大きい場合は補正値で上書き。
+    // speed 1.15 で読まれる実尺に近づけるため EFFECTIVE_CHARS_PER_SEC を使う。
     const estimatedDuration = Math.max(
       SCENE_MIN_DURATION,
-      Math.min(SCENE_MAX_DURATION, s.narration_text.trim().length / JP_CHARS_PER_SECOND),
+      Math.min(SCENE_MAX_DURATION, narration.length / EFFECTIVE_CHARS_PER_SEC),
     )
     const modelDuration = Math.max(
       SCENE_MIN_DURATION,
       Math.min(SCENE_MAX_DURATION, durationNum),
     )
-    const duration = Math.abs(modelDuration - estimatedDuration) > 3
+    // クランプでナレーションを切った場合はモデルの duration を信用せず推定値を使う
+    const duration = (narration.length < s.narration_text.trim().length ||
+      Math.abs(modelDuration - estimatedDuration) > 3)
       ? estimatedDuration
       : modelDuration
 
     return {
       caption_text: s.caption_text.trim(),
-      narration_text: s.narration_text.trim(),
+      narration_text: narration,
       image_prompt: s.image_prompt.trim(),
       duration: Math.round(duration * 10) / 10,
     }
@@ -318,12 +363,21 @@ export async function generateVideoScript(
   const sceneCountMin = opts.sceneCount ?? DEFAULT_SCENE_COUNT_MIN
   const sceneCountMax = opts.sceneCount ?? DEFAULT_SCENE_COUNT_MAX
 
+  // 尺厳守のための文字数バジェット計算。
+  // 全体: targetDurationSec 秒ぶんの文字数 (speed 1.15 を考慮)
+  // 1シーン: それをシーン数で割る (タイトル/間ぶんを差し引いて 90% で安全マージン)
+  const totalCharBudget = Math.round(targetDurationSec * EFFECTIVE_CHARS_PER_SEC * 0.9)
+  const sceneCountForCalc = opts.sceneCount ?? Math.round((DEFAULT_SCENE_COUNT_MIN + DEFAULT_SCENE_COUNT_MAX) / 2)
+  const perSceneChars = Math.max(15, Math.round(totalCharBudget / sceneCountForCalc))
+
   const apiKey = await fetchOpenRouterKeyForUser(ctx.userId)
 
   const systemPrompt = buildSystemPrompt({
     targetDurationSec,
     sceneCountMin,
     sceneCountMax,
+    perSceneChars,
+    totalCharBudget,
   })
   const userPrompt = buildUserPrompt(theme, targetDurationSec, sceneCountMin, sceneCountMax)
 
@@ -378,5 +432,7 @@ export async function generateVideoScript(
     )
   }
 
-  return validateScriptResponse(parsed, rawContent)
+  // maxCharsPerScene はプロンプト指示 (perSceneChars) に少し余裕を持たせた上限。
+  // AI の自然なブレは許容しつつ、暴走的な長文だけ確実に切る。
+  return validateScriptResponse(parsed, rawContent, perSceneChars + 15)
 }

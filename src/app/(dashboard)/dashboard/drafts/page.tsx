@@ -4,14 +4,15 @@ import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import {
   FileText, Send, Trash2, User, ImageIcon, RefreshCw,
-  CheckCircle, ChevronDown, ChevronUp,
+  CheckCircle, ChevronDown, ChevronUp, X,
 } from 'lucide-react'
 import { Card } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
 import { cx } from '@/lib/utils'
 import { useToast } from '@/components/ui/Toast'
 import { useConfirm } from '@/components/ui/ConfirmDialog'
-import type { Post } from '@/types/database'
+import { useModalA11y } from '@/lib/hooks/use-modal-a11y'
+import type { Account, Post } from '@/types/database'
 
 const STATUS_CONFIG: Record<string, { label: string; cls: string }> = {
   draft:      { label: '下書き',   cls: 'bg-gray-100 text-gray-600' },
@@ -27,21 +28,33 @@ function formatDate(iso: string) {
   })
 }
 
+interface AccountOption {
+  id: string
+  name: string
+  platform: string
+}
+
 function DraftCard({
   post,
+  accounts,
   onPublish,
   onDelete,
   publishing,
   deleting,
 }: {
   post: Post
-  onPublish: (id: string) => void
+  accounts: AccountOption[]
+  onPublish: (id: string, accountId?: string) => void
   onDelete: (id: string) => void
   publishing: boolean
   deleting: boolean
 }) {
   const [expanded, setExpanded] = useState(false)
   const [imgOpen, setImgOpen] = useState(false)
+  const imgModalRef = useModalA11y<HTMLDivElement>(imgOpen, () => setImgOpen(false))
+  // account_id 未割当の post に対する選択中アカウント。
+  // 初期値を空にすることで「最初の1つに暗黙投稿」事故を防ぐ → 明示的に選ぶまで投稿ボタン disabled。
+  const [pickerAccountId, setPickerAccountId] = useState<string>('')
 
   const { label, cls } = STATUS_CONFIG[post.status] ?? STATUS_CONFIG.draft
   const text = post.text_content ?? ''
@@ -55,7 +68,12 @@ function DraftCard({
         <div className="shrink-0">
           {post.image_url ? (
             <>
-              <button onClick={() => setImgOpen(true)} className="block">
+              <button
+                type="button"
+                onClick={() => setImgOpen(true)}
+                aria-label="投稿画像を拡大表示"
+                className="block rounded-md focus-visible:outline-2 focus-visible:outline-[#00A3BF] focus-visible:outline-offset-2"
+              >
                 <img
                   src={post.image_url}
                   alt="投稿画像"
@@ -67,12 +85,28 @@ function DraftCard({
                   className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"
                   onClick={() => setImgOpen(false)}
                 >
-                  <img
-                    src={post.image_url}
-                    alt="投稿画像"
-                    className="max-h-[90vh] max-w-[90vw] rounded-xl object-contain shadow-2xl"
-                    onClick={e => e.stopPropagation()}
-                  />
+                  <div
+                    ref={imgModalRef}
+                    role="dialog"
+                    aria-modal="true"
+                    aria-label="投稿画像のプレビュー"
+                    className="relative"
+                  >
+                    <img
+                      src={post.image_url}
+                      alt="投稿画像"
+                      className="max-h-[90vh] max-w-[90vw] rounded-xl object-contain shadow-2xl"
+                      onClick={e => e.stopPropagation()}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setImgOpen(false)}
+                      aria-label="閉じる"
+                      className="absolute right-2 top-2 rounded-full bg-white/90 p-1.5 text-gray-700 shadow hover:bg-white focus-visible:outline-2 focus-visible:outline-[#00A3BF]"
+                    >
+                      <X className="h-4 w-4" />
+                    </button>
+                  </div>
                 </div>
               )}
             </>
@@ -92,9 +126,9 @@ function DraftCard({
               {label}
             </span>
             {post.theme && (
-              <span className="truncate text-[11px] text-gray-400">#{post.theme}</span>
+              <span className="truncate text-[11px] text-gray-500">#{post.theme}</span>
             )}
-            <span className="ml-auto text-[11px] text-gray-400">
+            <span className="ml-auto text-[11px] text-gray-500">
               {formatDate(post.created_at)}
             </span>
           </div>
@@ -117,7 +151,7 @@ function DraftCard({
                 }
               </button>
             )}
-            <div className="ml-auto flex gap-2">
+            <div className="ml-auto flex flex-wrap items-center gap-2">
               {(post.status === 'draft' || post.status === 'failed') && post.account_id && (
                 <Button
                   onClick={() => onPublish(post.id)}
@@ -129,6 +163,42 @@ function DraftCard({
                   <Send className="h-3 w-3" />
                   今すぐ投稿
                 </Button>
+              )}
+              {/* account_id 未割当: アカウント選択して投稿 */}
+              {(post.status === 'draft' || post.status === 'failed') && !post.account_id && (
+                <>
+                  {accounts.length === 0 ? (
+                    <span className="text-[11px] text-amber-600">
+                      投稿先アカウントを先に追加してください
+                    </span>
+                  ) : (
+                    <>
+                      <select
+                        value={pickerAccountId}
+                        onChange={(e) => setPickerAccountId(e.target.value)}
+                        aria-label="投稿先アカウント"
+                        className="appearance-none rounded-md border border-gray-300 bg-white px-2 py-1 text-xs text-gray-900 outline-hidden focus:border-[#00A3BF] focus:ring-2 focus:ring-[#00A3BF]/20"
+                      >
+                        <option value="">アカウントを選択</option>
+                        {accounts.map((a) => (
+                          <option key={a.id} value={a.id}>
+                            {a.name}（{a.platform}）
+                          </option>
+                        ))}
+                      </select>
+                      <Button
+                        onClick={() => onPublish(post.id, pickerAccountId)}
+                        disabled={publishing || !pickerAccountId}
+                        isLoading={publishing}
+                        loadingText="投稿中..."
+                        className="gap-1 py-1 px-2.5 text-xs"
+                      >
+                        <Send className="h-3 w-3" />
+                        投稿
+                      </Button>
+                    </>
+                  )}
+                </>
               )}
               {post.status !== 'posted' && (
                 <button
@@ -148,10 +218,15 @@ function DraftCard({
             </div>
           </div>
 
-          {post.account_id && (
+          {post.account_id ? (
             <div className="mt-1.5 flex items-center gap-1 text-[10px] text-gray-300">
               <User className="h-3 w-3" />
               アカウントあり
+            </div>
+          ) : (
+            <div className="mt-1.5 flex items-center gap-1 text-[10px] text-amber-500">
+              <User className="h-3 w-3" />
+              アカウント未割当（投稿時に選択してください）
             </div>
           )}
         </div>
@@ -165,32 +240,74 @@ export default function DraftsPage() {
   const toast = useToast()
   const confirm = useConfirm()
   const [posts, setPosts] = useState<Post[]>([])
+  const [accounts, setAccounts] = useState<AccountOption[]>([])
   const [loading, setLoading] = useState(true)
   const [publishing, setPublishing] = useState<string | null>(null)
   const [deleting, setDeleting] = useState<string | null>(null)
   const [filter, setFilter] = useState<'all' | 'draft' | 'posted' | 'failed'>('all')
 
-  async function load() {
+  async function load(signal?: AbortSignal) {
     setLoading(true)
-    const res = await fetch('/api/posts')
-    const data = await res.json() as Post[]
-    setPosts(Array.isArray(data) ? data : [])
-    setLoading(false)
+    try {
+      // posts と accounts を並列取得
+      const [postsRes, accountsRes] = await Promise.all([
+        fetch('/api/posts', { signal }),
+        fetch('/api/accounts', { signal }),
+      ])
+
+      if (!postsRes.ok) throw new Error(`posts HTTP ${postsRes.status}`)
+      const postsData = await postsRes.json() as Post[]
+      setPosts(Array.isArray(postsData) ? postsData : [])
+
+      if (accountsRes.ok) {
+        const raw = await accountsRes.json() as Account[] | { accounts?: Account[] }
+        const list = Array.isArray(raw) ? raw : (raw.accounts ?? [])
+        // posts 投稿先となるプラットフォーム (threads / instagram / x) のみ抽出
+        const filtered: AccountOption[] = (list as Account[])
+          .filter((a) => a.platform === 'threads' || a.platform === 'instagram' || a.platform === 'x')
+          .map((a) => ({ id: a.id, name: a.name, platform: a.platform }))
+        setAccounts(filtered)
+      }
+    } catch (e) {
+      // アンマウント等による中断は無視
+      if (e instanceof DOMException && e.name === 'AbortError') return
+      console.error('[drafts load]', e instanceof Error ? e.message : 'unknown')
+      toast.error('読み込みに失敗しました。通信状況を確認して再読み込みしてください。')
+    } finally {
+      // 成功・失敗いずれでもローディングを必ず解除 (永久スピナー防止)
+      // 中断時は setState を避ける (アンマウント後の警告防止)
+      if (!signal?.aborted) setLoading(false)
+    }
   }
 
-  useEffect(() => { load() }, [])
+  useEffect(() => {
+    const ctrl = new AbortController()
+    void load(ctrl.signal)
+    return () => ctrl.abort()
+    // load は再生成されるが初回マウントのみで使うので依存は空でよい
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
-  async function handlePublish(postId: string) {
+  async function handlePublish(postId: string, accountId?: string) {
     setPublishing(postId)
     try {
-      const res = await fetch(`/api/posts/${postId}/publish`, { method: 'POST' })
+      const res = await fetch(`/api/posts/${postId}/publish`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: accountId ? JSON.stringify({ accountId }) : undefined,
+      })
       if (!res.ok) {
         const data = await res.json().catch(() => ({})) as { error?: string }
         toast.error(data.error ?? '投稿に失敗しました')
         return
       }
       toast.success('投稿しました')
-      await load()
+      // 全件 refetch せず該当 post だけローカルで posted に更新
+      setPosts(prev => prev.map(p =>
+        p.id === postId
+          ? { ...p, status: 'posted', account_id: accountId ?? p.account_id }
+          : p,
+      ))
     } finally {
       setPublishing(null)
     }
@@ -237,8 +354,8 @@ export default function DraftsPage() {
           <p className="mt-0.5 text-sm text-gray-500">生成した投稿の管理・確認・投稿</p>
         </div>
         <button
-          onClick={load}
-          className="flex items-center gap-1 text-sm text-gray-400 hover:text-gray-600 transition-colors"
+          onClick={() => load()}
+          className="flex items-center gap-1 text-sm text-gray-500 hover:text-gray-600 transition-colors"
         >
           <RefreshCw className={cx('h-4 w-4', loading && 'animate-spin')} />
           更新
@@ -277,12 +394,12 @@ export default function DraftsPage() {
       ) : filtered.length === 0 ? (
         <Card className="py-14 text-center">
           <div className="mx-auto mb-3 flex h-11 w-11 items-center justify-center rounded-lg bg-gray-100">
-            <FileText className="h-5 w-5 text-gray-400" />
+            <FileText className="h-5 w-5 text-gray-500" />
           </div>
           <p className="text-sm font-medium text-gray-500">
             {filter === 'all' ? '投稿がありません' : `${STATUS_CONFIG[filter].label}の投稿がありません`}
           </p>
-          <p className="mt-0.5 text-xs text-gray-400">「投稿生成」から作成してください</p>
+          <p className="mt-0.5 text-xs text-gray-500">「投稿生成」から作成してください</p>
           <Button onClick={() => router.push('/dashboard/generate')} className="mt-4">
             投稿を生成する
           </Button>
@@ -293,6 +410,7 @@ export default function DraftsPage() {
             <DraftCard
               key={post.id}
               post={post}
+              accounts={accounts}
               onPublish={handlePublish}
               onDelete={handleDelete}
               publishing={publishing === post.id}

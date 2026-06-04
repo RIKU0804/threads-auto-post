@@ -4,7 +4,7 @@
  * - 画像生成プロンプトに合成する用
  */
 
-const VISION_MODEL = 'google/gemini-2.0-flash-001'
+const VISION_MODEL = 'google/gemini-flash-latest'
 const REQUEST_TIMEOUT_MS = 30_000
 
 const SYSTEM_PROMPT = `You analyze an image's *visual design structure* to be used as a reference template for generating a NEW image with different content.

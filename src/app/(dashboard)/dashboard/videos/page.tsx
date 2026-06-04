@@ -6,10 +6,21 @@ import { Card } from '@/components/ui/Card'
 import { VideoCard } from '@/components/videos/VideoCard'
 import { LocalOnlyBanner } from '@/components/video/LocalOnlyBanner'
 import { createServerSupabaseClient } from '@/lib/supabase'
+import { resolveAssetUrl } from '@/lib/video/signed-urls'
 import type { Video } from '@/types/database'
 
+interface RawScene {
+  image_url: string | null
+  order_index: number
+}
+
 interface VideoListItem extends Video {
-  scenes?: { count: number }[] | null
+  scenes?: RawScene[] | null
+}
+
+interface VideoCardItem extends Video {
+  scenes?: { count: number }[]
+  thumbnail_url?: string | null
 }
 
 export default async function VideosPage() {
@@ -19,12 +30,29 @@ export default async function VideosPage() {
 
   const { data: videos } = await supabase
     .from('videos')
-    .select('*, scenes:scenes(count)')
+    .select('*, scenes:scenes(image_url, order_index)')
     .eq('user_id', user.id)
     .order('created_at', { ascending: false })
     .limit(50)
 
-  const list = (videos ?? []) as VideoListItem[]
+  const rawList = (videos ?? []) as VideoListItem[]
+
+  // 各動画の「先頭シーンの image_url」を signed URL 化してサムネに使う。
+  // 並列処理: 1 動画 = 1 リクエスト。50 動画なら 50 並列 (Supabase 側でレート制限なし)。
+  const list: VideoCardItem[] = await Promise.all(
+    rawList.map(async (v) => {
+      const scenes = v.scenes ?? []
+      const sortedScenes = [...scenes].sort((a, b) => (a.order_index ?? 0) - (b.order_index ?? 0))
+      const firstImage = sortedScenes[0]?.image_url ?? null
+      const thumbnail = await resolveAssetUrl(firstImage)
+      const card: VideoCardItem = {
+        ...v,
+        scenes: [{ count: scenes.length }],
+        thumbnail_url: thumbnail,
+      }
+      return card
+    }),
+  )
 
   return (
     <div className="p-6 lg:p-8 max-w-5xl">
@@ -48,10 +76,10 @@ export default async function VideosPage() {
       {list.length === 0 ? (
         <Card className="py-14 text-center">
           <div className="mx-auto mb-3 flex h-11 w-11 items-center justify-center rounded-lg bg-gray-100">
-            <VideoIcon className="h-5 w-5 text-gray-400" />
+            <VideoIcon className="h-5 w-5 text-gray-500" />
           </div>
           <p className="text-sm font-medium text-gray-500">動画がまだありません</p>
-          <p className="mt-0.5 text-xs text-gray-400">「新規動画作成」から始めましょう</p>
+          <p className="mt-0.5 text-xs text-gray-500">「新規動画作成」から始めましょう</p>
           <Link href="/dashboard/videos/new" className="mt-4 inline-block">
             <Button className="gap-1.5">
               <Plus className="h-4 w-4" />

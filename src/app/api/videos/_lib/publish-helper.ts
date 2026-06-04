@@ -2,7 +2,11 @@ import 'server-only'
 import { NextResponse } from 'next/server'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { publishVideo, type VideoPublishOptions as PublisherOptions } from '@/lib/platforms/publishers'
+import { resolveAssetUrl } from '@/lib/video/signed-urls'
 import type { Account, Platform, Video } from '@/types/database'
+
+// 公開時に発行する signed URL の有効期限（秒）。TikTok/YouTube が pull する余裕を持たせる。
+const PUBLISH_SIGNED_URL_TTL_SEC = 60 * 60
 
 /**
  * 公開処理中ロック (publish_status='publishing') が古すぎる場合は再投稿を許可するための閾値。
@@ -121,10 +125,24 @@ export async function publishVideoToAccount({
   }
 
   try {
-    // captionOverride があれば video.title を一時上書き（DB は変えない）
-    const effectiveVideo: Video = captionOverride
-      ? { ...v, title: captionOverride }
-      : v
+    // final_video_url は storage path で保存されているため、公開前に signed URL へ解決する。
+    // （プラットフォーム側がこの URL を pull するので https の署名付き URL が必要）
+    const signedFinalUrl = await resolveAssetUrl(v.final_video_url, PUBLISH_SIGNED_URL_TTL_SEC)
+    if (!signedFinalUrl) {
+      await supabase
+        .from('videos')
+        .update({ publish_status: 'publish_failed' })
+        .eq('id', videoId)
+      return NextResponse.json({ error: '動画ファイルの URL を生成できませんでした' }, { status: 400 })
+    }
+
+    // captionOverride があれば video.title を一時上書き（DB は変えない）。
+    // final_video_url は署名済み URL に差し替えて publisher へ渡す。
+    const effectiveVideo: Video = {
+      ...v,
+      final_video_url: signedFinalUrl,
+      ...(captionOverride ? { title: captionOverride } : {}),
+    }
 
     // Instagram Reels はコンテナ作成と公開メディア確定が分かれているため、
     // コンテナ ID をまず instagram_reel_id に書き残しておき、その後 publish 成功時に
@@ -162,24 +180,37 @@ export async function publishVideoToAccount({
 
     const publishedTo = Array.isArray(v.published_to) ? [...v.published_to] : []
     const platformKey = platform as Platform
-    if (!publishedTo.includes(platformKey)) publishedTo.push(platformKey)
 
-    const updates: Record<string, unknown> = {
-      publish_status: 'published',
-      published_to: publishedTo,
-      published_at: new Date().toISOString(),
-      error_message: null,
-    }
-    if (platform === 'tiktok' && result.platformPublishId) {
-      updates.tiktok_publish_id = result.platformPublishId
-    }
-    if (platform === 'youtube' && result.platformPublishId) {
-      updates.youtube_video_id = result.platformPublishId
-    }
-    if (platform === 'instagram' && result.platformPublishId) {
-      // onContainerCreated で書いた containerId を最終 mediaId で上書き
-      updates.instagram_reel_id = result.platformPublishId
-    }
+    // TikTok の Direct Post は非同期: video/init が publish_id を返した時点では
+    // まだ TikTok 側でダウンロード/公開が完了していない。ここで published 確定すると
+    // 実際には失敗していても「成功」と表示されてしまう。
+    // → tiktok は publish_status='publishing' のまま tiktok_publish_id を残し、
+    //   /api/videos/[id]/publish/tiktok/status のポーリングで確定する。
+    const isTikTokAsync = platform === 'tiktok'
+
+    const updates: Record<string, unknown> = isTikTokAsync
+      ? {
+          publish_status: 'publishing',
+          tiktok_publish_id: result.platformPublishId ?? null,
+          error_message: null,
+        }
+      : (() => {
+          if (!publishedTo.includes(platformKey)) publishedTo.push(platformKey)
+          const u: Record<string, unknown> = {
+            publish_status: 'published',
+            published_to: publishedTo,
+            published_at: new Date().toISOString(),
+            error_message: null,
+          }
+          if (platform === 'youtube' && result.platformPublishId) {
+            u.youtube_video_id = result.platformPublishId
+          }
+          if (platform === 'instagram' && result.platformPublishId) {
+            // onContainerCreated で書いた containerId を最終 mediaId で上書き
+            u.instagram_reel_id = result.platformPublishId
+          }
+          return u
+        })()
 
     await supabase.from('videos').update(updates).eq('id', videoId)
 
