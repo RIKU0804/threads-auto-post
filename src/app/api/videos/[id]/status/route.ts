@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createServerSupabaseClient } from '@/lib/supabase'
-import type { Scene, VideoStatus } from '@/types/database'
+import { checkAndFinalizeHeyGen } from '@/lib/video/pipeline'
+import type { Scene, VideoStatus, GenerationMode } from '@/types/database'
 
 type Step = 'script' | 'images' | 'voice' | 'render' | 'done' | 'needs_render' | 'failed'
 
@@ -51,7 +52,7 @@ export async function GET(
 
     const { data: video, error } = await supabase
       .from('videos')
-      .select('id, status, error_message, final_video_url, scenes:scenes(image_url, audio_url)')
+      .select('id, status, error_message, final_video_url, generation_mode, scenes:scenes(image_url, audio_url)')
       .eq('id', id)
       .eq('user_id', user.id)
       .maybeSingle()
@@ -61,8 +62,29 @@ export async function GET(
       return NextResponse.json({ error: '動画が見つかりません' }, { status: 404 })
     }
 
-    const status = video.status as VideoStatus
-    const hasFinalVideo = !!video.final_video_url
+    // HeyGen アバター動画は完了確認をクライアント駆動の単発チェックに分離している。
+    // rendering 中にこのエンドポイントが叩かれたら HeyGen 側の完了を確認し、
+    // 完了していれば finalize（ダウンロード+保存→ready）する。
+    let status = video.status as VideoStatus
+    if (
+      (video.generation_mode as GenerationMode) === 'heygen_avatar' &&
+      status === 'rendering' &&
+      !video.final_video_url
+    ) {
+      try {
+        const result = await checkAndFinalizeHeyGen(id, user.id)
+        if (result === 'ready') status = 'ready'
+        else if (result === 'failed') status = 'failed'
+      } catch (e) {
+        // finalize の一時失敗は status 取得自体を止めない（rendering のまま返す）
+        console.error('[videos/[id]/status] heygen finalize', id, e instanceof Error ? e.message : 'unknown')
+      }
+    }
+
+    const { data: fresh } = status !== (video.status as VideoStatus)
+      ? await supabase.from('videos').select('final_video_url').eq('id', id).maybeSingle()
+      : { data: null }
+    const hasFinalVideo = !!(fresh?.final_video_url ?? video.final_video_url)
     const step = deriveStep(status, hasFinalVideo)
     const scenes = (Array.isArray(video.scenes) ? video.scenes : []) as Pick<Scene, 'image_url' | 'audio_url'>[]
 

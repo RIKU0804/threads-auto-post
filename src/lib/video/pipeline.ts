@@ -17,7 +17,7 @@ import {
 import { DEFAULT_VOICE_ID } from '@/lib/video/voice-presets'
 import {
   generateAvatarVideo,
-  pollUntilComplete,
+  getVideoStatus as getHeyGenVideoStatus,
   type HeyGenVoiceInput,
 } from '@/lib/video/heygen'
 import {
@@ -842,13 +842,8 @@ export async function runVideoPipeline(
  */
 const HEYGEN_DOWNLOAD_MAX_BYTES = 200 * 1024 * 1024
 
-/**
- * HeyGen のステータスポーリング設定。
- *   - intervalMs: API レート (~10/min) に収まる粒度
- *   - timeoutMs : 15分。HeyGen は通常数分で完成するが、混雑時の安全策。
- */
-const HEYGEN_POLL_INTERVAL_MS = 10_000
-const HEYGEN_POLL_TIMEOUT_MS = 15 * 60_000
+// ステータスポーリングはサーバー内ループではなく、クライアント駆動の単発チェック
+// (checkAndFinalizeHeyGen) に分離したため、旧ポーリング設定 (interval/timeout) は廃止。
 
 const HEYGEN_OUTPUT_DIMENSION = { width: 1080, height: 1920 } as const
 
@@ -980,32 +975,71 @@ async function ensureHeyGenJob(
  * Step C: HeyGen ジョブをポーリングし、完成 MP4 を取り込んで Storage に再アップロード、
  * videos.status を 'ready' に遷移させる。
  */
-async function finalizeHeyGenOutput(
-  video: Video,
-  heygenVideoId: string,
-): Promise<void> {
-  const completed = await pollUntilComplete(video.user_id, heygenVideoId, {
-    intervalMs: HEYGEN_POLL_INTERVAL_MS,
-    timeoutMs: HEYGEN_POLL_TIMEOUT_MS,
-  })
-  if (!completed.videoUrl) {
-    throw new PipelineError('HeyGen から動画 URL が返りませんでした')
+export type HeyGenCheckState = 'rendering' | 'ready' | 'failed'
+
+/**
+ * HeyGen ジョブの状態を「1回だけ」確認し、完了していれば MP4 をダウンロードして
+ * Storage に保存し ready に遷移させる。未完了なら何もしない（rendering 継続）。
+ *
+ * Vercel タイムアウト対策: 旧 finalizeHeyGenOutput は完了まで最大15分ポーリングしていたが、
+ * これを単発チェックに分離した。クライアントが status エンドポイントを数秒ごとに叩くたびに
+ * この関数が呼ばれ、HeyGen 側が完了した時点で finalize される。
+ *
+ * 冪等: final_video_url が既にあれば ready 化のみ。完了検知時の download+upload は
+ * uploadFinalVideo が upsert なので二重実行されても上書きで安全。
+ */
+export async function checkAndFinalizeHeyGen(
+  videoId: string,
+  expectedUserId?: string,
+): Promise<HeyGenCheckState> {
+  const video = await loadVideo(videoId)
+  if (expectedUserId && video.user_id !== expectedUserId) {
+    throw new PipelineError('動画の所有者が一致しません')
   }
+  if (video.generation_mode !== 'heygen_avatar') {
+    throw new PipelineError('HeyGen アバター動画ではありません')
+  }
+  // 既に完成
+  if (video.final_video_url) {
+    if (video.status !== 'ready') {
+      await updateVideoStatus(videoId, 'ready', { error_message: null })
+    }
+    return 'ready'
+  }
+  // まだジョブ未投入（投入処理が走行中）
+  if (!video.heygen_video_id) return 'rendering'
 
-  const mp4Bytes = await downloadHeyGenVideo(completed.videoUrl)
-  const uploaded = await uploadFinalVideo({
-    userId: video.user_id,
-    videoId: video.id,
-    mp4Bytes,
-  })
-
-  await updateVideoStatus(video.id, 'ready', {
-    // storage path を保存（読み取り時に署名）。Remotion 経路と統一。
-    final_video_url: uploaded.storagePath,
-    published_to: [],
-    publish_status: 'unpublished',
-    error_message: null,
-  })
+  try {
+    const status = await getHeyGenVideoStatus(video.user_id, video.heygen_video_id)
+    if (status.status === 'completed') {
+      if (!status.videoUrl) {
+        throw new PipelineError('HeyGen から動画 URL が返りませんでした')
+      }
+      const mp4Bytes = await downloadHeyGenVideo(status.videoUrl)
+      const uploaded = await uploadFinalVideo({
+        userId: video.user_id,
+        videoId: video.id,
+        mp4Bytes,
+      })
+      await updateVideoStatus(videoId, 'ready', {
+        final_video_url: uploaded.storagePath,
+        published_to: [],
+        publish_status: 'unpublished',
+        error_message: null,
+      })
+      return 'ready'
+    }
+    if (status.status === 'failed') {
+      await markVideoFailed(videoId, status.errorMessage ?? 'HeyGen 動画生成に失敗しました')
+      return 'failed'
+    }
+    // pending / processing / waiting → 継続
+    return 'rendering'
+  } catch (e) {
+    // status 取得や download の一時エラーは failed にせず rendering を返して次回ポーリングに委ねる。
+    console.error('[checkAndFinalizeHeyGen]', videoId, e instanceof Error ? e.message : 'unknown')
+    return 'rendering'
+  }
 }
 
 /**
@@ -1085,10 +1119,12 @@ async function runHeyGenPipeline(
   await updateVideoStatus(videoId, 'rendering')
   // ensureHeyGenJob は最新の video を見たいので、voice_url 更新後の状態を再取得
   const refreshedForJob = await loadVideo(videoId)
-  const heygenVideoId = await ensureHeyGenJob(refreshedForJob, voice)
+  await ensureHeyGenJob(refreshedForJob, voice)
 
-  // --- Step 4: ポーリング → ダウンロード → Storage 保存 → ready ------
-  await finalizeHeyGenOutput(refreshedForJob, heygenVideoId)
+  // Step4 (完了ポーリング → ダウンロード → 保存 → ready) は分離した。
+  // クライアントが status エンドポイントを叩くたびに checkAndFinalizeHeyGen が
+  // HeyGen 側の完了を確認して finalize する（Vercel の長時間ポーリング制限を回避）。
+  // ここでは heygen_video_id を保存して status=rendering のまま終える。
 }
 
 /**

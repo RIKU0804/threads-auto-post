@@ -188,16 +188,8 @@ const PostBodySchema = z.object({
 
 export async function POST(req: NextRequest) {
   try {
-    // 動画生成は Vercel Functions では実行不可（Chromium 1.5GB / タイムアウト）
-    // VIDEO_RENDERING_ENABLED=1 で強制有効化可（自前ワーカー運用時の脱出ハッチ）
-    const capability = videoCapability()
-    if (!capability.enabled) {
-      return NextResponse.json(
-        { error: capability.message, code: 'LOCAL_ONLY' },
-        { status: 503 },
-      )
-    }
-
+    // capability チェックは generationMode 確定後に行う（HeyGen は Vercel でも可、
+    // Remotion はローカル限定）。ここでは認証・レート制限を先に通す。
     const supabase = await createServerSupabaseClient()
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return NextResponse.json({ error: '認証が必要です' }, { status: 401 })
@@ -238,6 +230,16 @@ export async function POST(req: NextRequest) {
       )
     }
     const generationMode: GenerationMode = generationModeStr
+
+    // 動画生成の実行可否を mode 別に判定。
+    // Remotion は Chromium 必須でローカル限定、HeyGen はクラウドレンダで Vercel でも可。
+    const capability = videoCapability(generationMode)
+    if (!capability.enabled) {
+      return NextResponse.json(
+        { error: capability.message, code: 'LOCAL_ONLY' },
+        { status: 503 },
+      )
+    }
 
     const theme = parsed.data.theme.trim()
     const titleRaw = parsed.data.title?.trim() ?? ''

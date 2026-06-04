@@ -18,6 +18,9 @@
 
 export type VideoRuntimeMode = 'enabled' | 'disabled-on-vercel'
 
+/** 動画生成モード。runtime-env は types/database に依存しないよう局所定義する。 */
+export type VideoGenerationMode = 'remotion' | 'heygen_avatar'
+
 interface VideoCapability {
   /** 動画生成パイプラインを実行できるか */
   enabled: boolean
@@ -28,7 +31,7 @@ interface VideoCapability {
 }
 
 const LOCAL_VIDEO_MESSAGE =
-  '動画生成パイプラインはローカル環境（npm run dev）でのみ実行できます。Remotion は Chromium、HeyGen は最大15分のポーリングを必要とするため、いずれも Vercel Functions の制限を超えます。'
+  'この動画生成（Remotion・画像+ナレーション合成）は Chromium を必要とするため、ローカル環境（npm run dev）でのみ実行できます。HeyGen アバター動画はクラウドレンダリングのため Vercel でも生成できます。'
 
 export function isVercelRuntime(): boolean {
   // 強制有効フラグ
@@ -44,7 +47,19 @@ export function isVercelRuntime(): boolean {
   return false
 }
 
-export function videoCapability(): VideoCapability {
+/**
+ * 動画生成が現在の環境で実行可能かを返す。
+ *
+ * - HeyGen アバター(heygen_avatar): HeyGen のクラウドでレンダリングし、完了確認は
+ *   クライアント駆動の単発チェックに分離済みなので Vercel でも実行可能。
+ * - Remotion(remotion / 未指定): Chromium 1.5GB が必要で Vercel Functions に乗らないため
+ *   ローカル開発限定（VIDEO_RENDERING_ENABLED=1 で強制有効化可）。
+ */
+export function videoCapability(mode?: VideoGenerationMode): VideoCapability {
+  // HeyGen はクラウドレンダ + ポーリング分離済み → どの環境でも実行可
+  if (mode === 'heygen_avatar') {
+    return { enabled: true, reason: 'enabled', message: '' }
+  }
   if (isVercelRuntime()) {
     return {
       enabled: false,

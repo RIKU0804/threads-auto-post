@@ -236,7 +236,8 @@ function NewVideoPageInner() {
         </p>
       </div>
 
-      <LocalOnlyBanner variant="block" />
+      {/* ローカル限定バナーは Remotion モードのみ。HeyGen はクラウドレンダなので Vercel でも生成可。 */}
+      {mode === 'remotion' && <LocalOnlyBanner variant="block" />}
 
       <Card className="space-y-5">
         {/* 生成モード */}
