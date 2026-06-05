@@ -1,9 +1,22 @@
-// Instagram Graph API adapter
-// Docs: https://developers.facebook.com/docs/instagram-api/guides/content-publishing
-// Token はすべて Authorization: Bearer ヘッダーで送信（URL query への露出を避ける）
-
-const IG_API_BASE = 'https://graph.facebook.com/v21.0'
+// Instagram API adapter（Instagram ログイン方式 / Business Login for Instagram）
+// Docs: https://developers.facebook.com/docs/instagram-platform/instagram-api-with-instagram-login
+//
+// 旧「Facebook ログイン方式」(graph.facebook.com + ページトークン + /me/accounts) から
+// 新「Instagram ログイン方式」(graph.instagram.com + IGユーザートークン) へ移行。
+// Facebookページ不要・ページ管理者不要・Graph API Explorer不要。
+// トークンはすべて Authorization: Bearer ヘッダーで送信（URL query への露出を避ける）。
+const IG_API_BASE = 'https://graph.instagram.com/v23.0'
 const REQUEST_TIMEOUT_MS = 30_000
+
+// ---- Business Login for Instagram (OAuth) ----
+export const INSTAGRAM_OAUTH_AUTHORIZE_URL = 'https://www.instagram.com/oauth/authorize'
+const INSTAGRAM_OAUTH_TOKEN_URL = 'https://api.instagram.com/oauth/access_token'
+const INSTAGRAM_LONGLIVED_URL = 'https://graph.instagram.com/access_token'
+/** 投稿に必要な最小スコープ（基本情報＋コンテンツ公開） */
+export const INSTAGRAM_OAUTH_SCOPES = [
+  'instagram_business_basic',
+  'instagram_business_content_publish',
+]
 
 /** Instagram キャプション上限 (Reels / Feed 共通) — 単一情報源 */
 export const INSTAGRAM_CAPTION_MAX = 2200
@@ -231,18 +244,95 @@ export async function refreshInstagramAccessToken(
 }
 
 /**
- * Token から接続済みの Instagram Business Account ID を取得
+ * Instagram ユーザートークンから IG ユーザー（プロアカウント）情報を取得。
+ * 新方式ではページ走査は不要で /me から直接取得できる。
  */
-export async function fetchInstagramUserId(accessToken: string): Promise<string> {
-  const data = await igRequest<{
-    data?: Array<{ instagram_business_account?: { id: string; username?: string } }>
-  }>(
-    '/me/accounts?fields=instagram_business_account{id,username}',
+export async function getInstagramAccountInfo(
+  accessToken: string,
+): Promise<{ id: string; username?: string }> {
+  const data = await igRequest<{ user_id?: string; id?: string; username?: string }>(
+    '/me?fields=user_id,username',
     accessToken,
   )
-  const igAccount = (data.data ?? []).find(p => p.instagram_business_account?.id)
-  if (!igAccount?.instagram_business_account?.id) {
-    throw new Error('連携済みの Instagram ビジネスアカウントが見つかりません')
+  const id = data.user_id ?? data.id
+  if (!id) {
+    throw new InstagramAuthError('Instagram ユーザー情報の取得に失敗しました')
   }
-  return igAccount.instagram_business_account.id
+  return { id, username: data.username }
+}
+
+/**
+ * トークンから接続済みの Instagram ユーザー ID を取得（後方互換のヘルパー）。
+ */
+export async function fetchInstagramUserId(accessToken: string): Promise<string> {
+  const { id } = await getInstagramAccountInfo(accessToken)
+  return id
+}
+
+export interface InstagramOAuthResult {
+  /** 長期（60日）アクセストークン */
+  accessToken: string
+  /** IG ユーザー（プロアカウント）ID */
+  igUserId: string
+  username?: string
+  /** epoch ミリ秒 */
+  expiresAt: number
+}
+
+/**
+ * 認可コードを長期アクセストークン＋IGユーザーIDに交換する。
+ *   1. code → 短期トークン (POST api.instagram.com/oauth/access_token)
+ *   2. 短期 → 長期(60日) (GET graph.instagram.com/access_token?grant_type=ig_exchange_token)
+ *   3. /me で username 取得
+ */
+export async function exchangeInstagramCode(
+  clientId: string,
+  clientSecret: string,
+  code: string,
+  redirectUri: string,
+): Promise<InstagramOAuthResult> {
+  // 1. 短期トークン
+  const shortRes = await fetch(INSTAGRAM_OAUTH_TOKEN_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      client_id: clientId,
+      client_secret: clientSecret,
+      grant_type: 'authorization_code',
+      redirect_uri: redirectUri,
+      code,
+    }).toString(),
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+  })
+  if (!shortRes.ok) {
+    console.error('[Instagram OAuth] short-lived exchange failed', shortRes.status)
+    throw new InstagramAuthError('Instagram 認可コードの交換に失敗しました')
+  }
+  const shortData = (await shortRes.json()) as { access_token?: string; user_id?: string | number }
+  if (!shortData.access_token) {
+    throw new InstagramAuthError('Instagram 短期トークンの取得に失敗しました')
+  }
+
+  // 2. 長期トークン（60日）
+  const longParams = new URLSearchParams({
+    grant_type: 'ig_exchange_token',
+    client_secret: clientSecret,
+    access_token: shortData.access_token,
+  })
+  const longRes = await fetch(`${INSTAGRAM_LONGLIVED_URL}?${longParams.toString()}`, {
+    method: 'GET',
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+  })
+  if (!longRes.ok) {
+    console.error('[Instagram OAuth] long-lived exchange failed', longRes.status)
+    throw new InstagramAuthError('Instagram 長期トークンの取得に失敗しました')
+  }
+  const longData = (await longRes.json()) as { access_token?: string; expires_in?: number }
+  const accessToken = longData.access_token ?? shortData.access_token
+  const expiresAt = Date.now() + (longData.expires_in ?? 60 * 24 * 60 * 60) * 1000
+
+  // 3. IGユーザーID / username
+  const info = await getInstagramAccountInfo(accessToken)
+
+  return { accessToken, igUserId: info.id, username: info.username, expiresAt }
 }

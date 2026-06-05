@@ -52,31 +52,19 @@ const SETUP_GUIDES: Record<SupportedPlatform, SetupGuide> = {
     ],
   },
   instagram: {
-    intro: 'Instagram投稿には「①ビジネスタイプのMetaアプリ ②プロアカウント(ビジネス)のInstagram ③そのIGと連携したFacebookページ ④ページの管理者権限」の4つが必須です。⚠️Threads用に作ったアプリでは投稿権限が出ません（instagram_manage_commentsしか出ない場合がこれ）。アプリは1個を全IGアカウントで使い回せます。',
+    intro: '下の「Instagramと連携」ボタンを押して、Instagramでログイン・許可するだけで連携完了します。Facebookページもトークン貼り付けも不要です。（下の手順は、初回にMetaアプリをつなぐためのＭ管理者向け準備です。一度設定すれば以降は連携ボタンだけでOK）',
     links: [
       { label: 'Meta for Developers を開く', href: 'https://developers.facebook.com/apps' },
-      { label: 'Graph API Explorer を開く', href: 'https://developers.facebook.com/tools/explorer' },
-      { label: 'Facebookページを作成', href: 'https://www.facebook.com/pages/create' },
-      { label: 'Instagram投稿API 公式手順', href: 'https://developers.facebook.com/docs/instagram-platform/content-publishing/' },
+      { label: 'InstagramログインAPI 公式手順', href: 'https://developers.facebook.com/docs/instagram-platform/instagram-api-with-instagram-login' },
     ],
     steps: [
-      '【初回のみ】developers.facebook.com に自分の Facebook アカウントでログイン → 開発者登録を済ませる',
-      '【初回のみ】「アプリを作成」→「アプリの詳細」を入力 → 次の「ユースケース」ステップへ進む',
-      '⚠️【初回のみ・最重要】ユースケース一覧から「Instagramでメッセージとコンテンツを管理」を選択（チェック）。"投稿の公開"ができるのはこのユースケース。Threadsだけ選んでいるとIG投稿権限は出ません。そのままウィザード（ビジネス→要件→概要）を最後まで進めて作成。1個を全IGアカウントで使い回せます',
-      '⚠️もし「一部のユースケースは同じアプリで組み合わせできません」と表示されたら、Instagram用は別アプリとして新規作成する（Threads用アプリと分けてOK。どちらも使い回せます）',
-      '⚠️Instagramのセットアップで認証方式を選ぶ場面では「Facebookログイン経由（API setup with Facebook login）」を選ぶ（本ツールはFacebookページ経由で投稿するため。「Instagramログイン経由」だとページ投稿ができません）',
-      '投稿先 Instagram を「プロアカウント(ビジネス)」に変更（IGアプリ → 設定 → アカウントの種類とツール → プロアカウントに切替）',
-      '⚠️必須: 投稿先のFacebookページを用意（無ければ上のリンクから新規作成。個人プロフィールとは別物）。あなたがそのページの管理者であること',
-      '⚠️必須: そのInstagramをFacebookページに連携（Facebookページ設定 → リンク済みアカウント → Instagram、またはIGアプリ → 設定 → ページをリンク）。※「アカウントセンター」のリンクだけでは不十分で、"ページ⇄IG" の接続が必要です',
-      'Graph API Explorer を開く（上のリンク）',
-      '⚠️最重要: 画面右の「Metaアプリ」ドロップダウンで、手順2で作った"ビジネスアプリ"を選択（別のアプリを選ぶと権限もページも出ません。今回のハマりポイントNo.1）',
-      '右の「許可を追加」で次の4つだけを追加：instagram_basic / instagram_content_publish / pages_show_list / pages_read_engagement（⚠️「manage_pages」は廃止済みの無効な権限。選ぶと "Invalid Scopes" エラーになるので絶対に入れない）',
-      '青い「Generate Access Token」をクリック → Facebookのポップアップで、対象ページに必ずチェックを入れて「許可/続行」（ここでページをオプトインしないと次で出ません）',
-      '右の「ユーザーまたはページ」ドロップダウン →「ページアクセストークンを取得」→ 対象のFacebookページを選択',
-      '表示された「ページアクセストークン」を丸ごとコピー',
-      '↓ の「Access Token」に貼り付けて保存。「Business Account ID」は空欄でOK（自動取得します）',
-      '2個目以降のIGアカウントは手順4〜13を繰り返すだけ（手順1〜3のアプリ作成・製品追加は不要）',
-      '💡トラブル時: 「許可を追加にinstagram_manage_commentsしか出ない」→ 手順2(ビジネスアプリ)か手順3(製品追加)が未完了／「Invalid Scopes: manage_pages」→ 手順9でmanage_pagesを外す＋手順8のアプリ選択を確認／「ページが選択肢に出ない」→ 手順5(管理者)・手順6(ページ連携)・手順10(ポップアップでのオプトイン)を確認',
+      '投稿先のInstagramを「プロアカウント（ビジネス or クリエイター）」にしておく（IGアプリ → 設定 → アカウントの種類とツール）',
+      '【初回のみ・管理者】Metaでアプリを作成 → ユースケースで「Instagramでメッセージとコンテンツを管理」を選択して作成（Facebookページは不要）',
+      '【初回のみ・管理者】作成したアプリの「Instagram」→「ビジネスログインの設定」で、リダイレクトURIに  https://threads-auto-post-umber.vercel.app/api/auth/instagram/callback  を登録',
+      '【初回のみ・管理者】同じ画面の Instagram アプリID / アプリシークレットを、デプロイ環境の環境変数 INSTAGRAM_APP_ID / INSTAGRAM_APP_SECRET に設定',
+      '↓の「Instagramと連携」ボタンを押す → Instagramのログイン画面で対象アカウントを選び「許可」→ 自動で連携完了（トークン取得・保存まで自動）',
+      '2個目以降のIGアカウントも、ボタンを押してそのアカウントでログイン・許可するだけ（アプリの再作成は不要）',
+      '💡トラブル時: ボタンを押しても「設定が不足」と出る→ 手順4の環境変数が未設定／ログイン後にエラー→ 手順3のリダイレクトURIが一致しているか確認／投稿先が選べない→ 手順1でプロアカウントになっているか確認',
     ],
   },
   x: {
@@ -305,6 +293,31 @@ export default function AccountsPage() {
   useEffect(() => {
     fetch('/api/accounts').then(r => r.json()).then(setAccounts).catch(() => {})
   }, [])
+
+  // OAuth 連携（Instagram 等）から戻ってきた時の結果表示 + URL クリーンアップ
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    const params = new URLSearchParams(window.location.search)
+    const success = params.get('success')
+    const error = params.get('error')
+    const plat = params.get('platform')
+    if (!success && !error) return
+    if (success) {
+      toast.success(`${plat === 'instagram' ? 'Instagram' : plat ?? ''}と連携しました`)
+    } else if (error) {
+      const map: Record<string, string> = {
+        server_misconfigured: '連携の設定が不足しています（管理者に連絡してください）',
+        token_exchange_failed: '連携に失敗しました。もう一度お試しください',
+        state_mismatch: 'セッションが切れました。もう一度お試しください',
+        state_missing: 'セッションが切れました。もう一度お試しください',
+        provider_error: 'Instagram側で許可されませんでした',
+        unauthorized: 'ログインが必要です',
+      }
+      toast.error(map[error] ?? `連携に失敗しました（${error}）`)
+    }
+    // クエリを消して再読込時の二重表示を防ぐ
+    window.history.replaceState({}, '', window.location.pathname)
+  }, [toast])
 
   function resetForm() {
     setForm({
@@ -556,6 +569,33 @@ export default function AccountsPage() {
 
             <div className="max-h-[calc(90vh-120px)] overflow-y-auto p-6">
               <div className="space-y-4">
+                {platform === 'instagram' && (
+                  <div className="space-y-4">
+                    <div className="rounded-lg border border-pink-100 bg-pink-50/60 p-4">
+                      <p className="text-sm font-semibold text-gray-800">Instagramと連携</p>
+                      <p className="mt-1 text-xs leading-relaxed text-gray-600">
+                        ボタンを押すとInstagramのログイン画面が開きます。投稿したいアカウントでログインして「許可」するだけで連携完了です。
+                        <br />Facebookページもアクセストークンの貼り付けも不要です。
+                      </p>
+                    </div>
+
+                    <SetupGuide key="instagram-oauth" platform="instagram" defaultOpen={false} />
+
+                    <a
+                      href="/api/auth/instagram"
+                      className="flex w-full items-center justify-center gap-2 rounded-md bg-gradient-to-r from-pink-500 via-fuchsia-500 to-orange-400 px-4 py-2.5 text-sm font-medium text-white shadow-xs transition hover:from-pink-600 hover:via-fuchsia-600 hover:to-orange-500"
+                    >
+                      <Camera className="h-4 w-4" />
+                      Instagramと連携する
+                    </a>
+
+                    <Button type="button" variant="secondary" onClick={closeForm} className="w-full" disabled={submitting}>
+                      キャンセル
+                    </Button>
+                  </div>
+                )}
+
+                {platform !== 'instagram' && (<>
                 <div>
                   <FieldLabel>アカウント名</FieldLabel>
                   <Input
@@ -595,9 +635,7 @@ export default function AccountsPage() {
                 {/* API credentials */}
                 <div className="rounded-lg border border-gray-200 bg-gray-50 p-4 space-y-3">
                   <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider">
-                    {platform === 'threads' ? 'Threads API 設定'
-                      : platform === 'instagram' ? 'Instagram API 設定'
-                      : 'X API 設定'}
+                    {platform === 'threads' ? 'Threads API 設定' : 'X API 設定'}
                   </p>
 
                   <SetupGuide key={platform} platform={platform} defaultOpen={!form.accessToken.trim()} />
@@ -611,7 +649,6 @@ export default function AccountsPage() {
                         onChange={e => setForm(f => ({ ...f, accessToken: e.target.value }))}
                         placeholder={
                           platform === 'threads' ? 'THXX...'
-                          : platform === 'instagram' ? 'EAA...'
                           : 'Access Token（Keys and tokens の3つ目）'
                         }
                         className="pr-10"
@@ -627,9 +664,7 @@ export default function AccountsPage() {
                     <p className="mt-1 text-[10px] text-gray-400">
                       {platform === 'threads'
                         ? 'Meta for Developers の Graph API Explorer または長期トークン'
-                        : platform === 'instagram'
-                          ? 'Facebook Page アクセストークン（Instagram Business Account 接続済み）'
-                          : 'X Developer Portal「Keys and tokens」の Access Token（App permissions は Read and write 必須）'}
+                        : 'X Developer Portal「Keys and tokens」の Access Token（App permissions は Read and write 必須）'}
                     </p>
                   </div>
 
@@ -640,16 +675,6 @@ export default function AccountsPage() {
                         value={form.threadsUserId}
                         onChange={e => setForm(f => ({ ...f, threadsUserId: e.target.value }))}
                         placeholder="空欄ならトークンから自動取得"
-                      />
-                    </div>
-                  )}
-                  {platform === 'instagram' && (
-                    <div>
-                      <FieldLabel optional>Instagram Business Account ID</FieldLabel>
-                      <Input
-                        value={form.instagramUserId}
-                        onChange={e => setForm(f => ({ ...f, instagramUserId: e.target.value }))}
-                        placeholder="空欄なら /me/accounts から自動取得"
                       />
                     </div>
                   )}
@@ -770,6 +795,7 @@ export default function AccountsPage() {
                     アカウントを追加
                   </Button>
                 </div>
+                </>)}
               </div>
             </div>
           </div>

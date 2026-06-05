@@ -242,8 +242,28 @@ async function tryRefreshToken(account: Account): Promise<boolean> {
     }
   }
 
+  if (account.platform === 'instagram') {
+    // Instagram ログイン方式の長期トークン（60日）を rotate する
+    if (!account.access_token) return false
+    try {
+      const refreshed = await refreshInstagramAccessToken(account.access_token)
+      account.access_token = refreshed.accessToken
+      account.token_expires_at = new Date(refreshed.expiresAt).toISOString()
+      await admin
+        .from('accounts')
+        .update({
+          access_token: encryptSecret(refreshed.accessToken),
+          token_expires_at: new Date(refreshed.expiresAt).toISOString(),
+        })
+        .eq('id', account.id)
+      return true
+    } catch (e) {
+      console.error('[publishers] Instagram refresh failed', e instanceof Error ? e.message : 'unknown')
+      return false
+    }
+  }
+
   // X は手動入力トークン運用なので refresh は実施しない（期限切れ時は再連携してもらう）
-  // Instagram も long-lived token の refresh は頻度が低く未対応
   return false
 }
 
