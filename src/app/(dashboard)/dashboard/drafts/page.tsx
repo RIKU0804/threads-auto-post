@@ -4,15 +4,16 @@ import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import {
   FileText, Send, Trash2, User, ImageIcon, RefreshCw,
-  CheckCircle, ChevronDown, ChevronUp, X,
+  CheckCircle, ChevronDown, ChevronUp, X, Video as VideoIcon, Plus,
 } from 'lucide-react'
 import { Card } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
+import { VideoCard } from '@/components/videos/VideoCard'
 import { cx } from '@/lib/utils'
 import { useToast } from '@/components/ui/Toast'
 import { useConfirm } from '@/components/ui/ConfirmDialog'
 import { useModalA11y } from '@/lib/hooks/use-modal-a11y'
-import type { Account, Post } from '@/types/database'
+import type { Account, Post, Video } from '@/types/database'
 
 const STATUS_CONFIG: Record<string, { label: string; cls: string }> = {
   draft:      { label: '下書き',   cls: 'bg-gray-100 text-gray-600' },
@@ -32,6 +33,12 @@ interface AccountOption {
   id: string
   name: string
   platform: string
+}
+
+// 下書き一覧の「動画」タブ用。/api/videos は scenes を count 形・thumbnail なしで返す
+interface VideoListItem extends Video {
+  scenes?: { count: number }[] | null
+  thumbnail_url?: string | null
 }
 
 function DraftCard({
@@ -244,15 +251,17 @@ export default function DraftsPage() {
   const [loading, setLoading] = useState(true)
   const [publishing, setPublishing] = useState<string | null>(null)
   const [deleting, setDeleting] = useState<string | null>(null)
-  const [filter, setFilter] = useState<'all' | 'draft' | 'posted' | 'failed'>('all')
+  const [videos, setVideos] = useState<VideoListItem[]>([])
+  const [filter, setFilter] = useState<'all' | 'draft' | 'posted' | 'failed' | 'video'>('all')
 
   async function load(signal?: AbortSignal) {
     setLoading(true)
     try {
       // posts と accounts を並列取得
-      const [postsRes, accountsRes] = await Promise.all([
+      const [postsRes, accountsRes, videosRes] = await Promise.all([
         fetch('/api/posts', { signal }),
         fetch('/api/accounts', { signal }),
+        fetch('/api/videos', { signal }),
       ])
 
       if (!postsRes.ok) throw new Error(`posts HTTP ${postsRes.status}`)
@@ -267,6 +276,14 @@ export default function DraftsPage() {
           .filter((a) => a.platform === 'threads' || a.platform === 'instagram' || a.platform === 'x')
           .map((a) => ({ id: a.id, name: a.name, platform: a.platform }))
         setAccounts(filtered)
+      }
+
+      // 動画は補助表示。取得に失敗しても下書き本体は表示するため throw しない
+      if (videosRes.ok) {
+        const vraw = await videosRes.json() as { videos?: VideoListItem[] }
+        setVideos(Array.isArray(vraw.videos) ? vraw.videos : [])
+      } else {
+        setVideos([])
       }
     } catch (e) {
       // アンマウント等による中断は無視
@@ -334,13 +351,16 @@ export default function DraftsPage() {
     }
   }
 
-  const filtered = filter === 'all' ? posts : posts.filter(p => p.status === filter)
+  const filtered = filter === 'all' || filter === 'video'
+    ? posts
+    : posts.filter(p => p.status === filter)
 
   const counts = {
     all:    posts.length,
     draft:  posts.filter(p => p.status === 'draft').length,
     posted: posts.filter(p => p.status === 'posted').length,
     failed: posts.filter(p => p.status === 'failed').length,
+    video:  videos.length,
   }
 
   return (
@@ -351,7 +371,7 @@ export default function DraftsPage() {
           <h1 className="text-xl font-semibold lg:text-2xl" style={{ color: '#061b31' }}>
             下書き一覧
           </h1>
-          <p className="mt-0.5 text-sm text-gray-500">生成した投稿の管理・確認・投稿</p>
+          <p className="mt-0.5 text-sm text-gray-500">生成した投稿・動画の管理</p>
         </div>
         <button
           onClick={() => load()}
@@ -364,7 +384,7 @@ export default function DraftsPage() {
 
       {/* Filter tabs */}
       <div className="mb-4 flex gap-1 rounded-lg bg-gray-100 p-1">
-        {(['all', 'draft', 'posted', 'failed'] as const).map(f => (
+        {(['all', 'draft', 'posted', 'failed', 'video'] as const).map(f => (
           <button
             key={f}
             onClick={() => setFilter(f)}
@@ -375,7 +395,7 @@ export default function DraftsPage() {
                 : 'text-gray-500 hover:text-gray-700',
             )}
           >
-            {f === 'all' ? 'すべて' : STATUS_CONFIG[f].label}
+            {f === 'all' ? 'すべて' : f === 'video' ? '動画' : STATUS_CONFIG[f].label}
             <span className={cx(
               'ml-1.5 rounded-full px-1.5 py-0.5 text-[10px]',
               filter === f ? 'bg-gray-100 text-gray-600' : 'bg-gray-200 text-gray-500',
@@ -391,6 +411,26 @@ export default function DraftsPage() {
         <div className="flex h-40 items-center justify-center">
           <div className="h-5 w-5 animate-spin rounded-full border-2 border-[#00A3BF] border-t-transparent" />
         </div>
+      ) : filter === 'video' ? (
+        videos.length === 0 ? (
+          <Card className="py-14 text-center">
+            <div className="mx-auto mb-3 flex h-11 w-11 items-center justify-center rounded-lg bg-gray-100">
+              <VideoIcon className="h-5 w-5 text-gray-500" />
+            </div>
+            <p className="text-sm font-medium text-gray-500">動画がまだありません</p>
+            <p className="mt-0.5 text-xs text-gray-500">「動画投稿」から作成してください</p>
+            <Button onClick={() => router.push('/dashboard/videos/new')} className="mt-4 gap-1.5">
+              <Plus className="h-4 w-4" />
+              動画を作成する
+            </Button>
+          </Card>
+        ) : (
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            {videos.map(v => (
+              <VideoCard key={v.id} video={v} />
+            ))}
+          </div>
+        )
       ) : filtered.length === 0 ? (
         <Card className="py-14 text-center">
           <div className="mx-auto mb-3 flex h-11 w-11 items-center justify-center rounded-lg bg-gray-100">
