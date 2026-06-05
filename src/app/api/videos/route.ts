@@ -8,6 +8,7 @@ import { isValidVoiceId } from '@/lib/video/voice-presets'
 import { requireApiKey, MissingApiKeyError } from '@/lib/ai/api-keys'
 import { requireElevenLabsKey, MissingElevenLabsKeyError } from '@/lib/video/elevenlabs'
 import { requireHeyGenKey, MissingHeyGenKeyError } from '@/lib/video/heygen'
+import { resolveAssetUrl } from '@/lib/video/signed-urls'
 import type { GenerationMode, VoiceSource } from '@/types/database'
 
 /**
@@ -67,9 +68,15 @@ function isGenerationMode(s: string): s is GenerationMode {
   return s === 'remotion' || s === 'heygen_avatar'
 }
 
+interface SceneThumbRow {
+  image_url: string | null
+  order_index: number | null
+}
+
 interface VideoListRow {
   id: string
   created_at: string
+  scenes?: SceneThumbRow[] | null
   [key: string]: unknown
 }
 
@@ -124,7 +131,8 @@ export async function GET(req: NextRequest) {
 
     let query = supabase
       .from('videos')
-      .select('*, scenes:scenes(count)')
+      // サムネ用に先頭シーン画像が要るため、count ではなくシーン行(image_url/order_index)を取得する
+      .select('*, scenes:scenes(image_url, order_index)')
       .eq('user_id', user.id)
       .order('created_at', { ascending: false })
       .order('id', { ascending: false })
@@ -144,11 +152,21 @@ export async function GET(req: NextRequest) {
 
     const rows = (data ?? []) as VideoListRow[]
     const hasMore = rows.length > limit
-    const videos = hasMore ? rows.slice(0, limit) : rows
+    const pageRows = hasMore ? rows.slice(0, limit) : rows
+
+    // 各動画に「先頭シーン画像の signed URL」をサムネとして付与し、scenes は件数形に整形する。
+    // (一覧ページ /dashboard/videos と同じ表示データを API でも返し、下書きの動画タブでもサムネを表示する)
+    const videos = await Promise.all(pageRows.map(async (v) => {
+      const scenes = Array.isArray(v.scenes) ? v.scenes : []
+      const firstImage = [...scenes]
+        .sort((a, b) => (a.order_index ?? 0) - (b.order_index ?? 0))[0]?.image_url ?? null
+      const thumbnail_url = await resolveAssetUrl(firstImage)
+      return { ...v, scenes: [{ count: scenes.length }], thumbnail_url }
+    }))
 
     const meta: { hasMore: boolean; nextCursor?: string } = { hasMore }
     if (hasMore) {
-      const last = videos[videos.length - 1]
+      const last = pageRows[pageRows.length - 1]
       meta.nextCursor = encodeCursor({ createdAt: last.created_at, id: last.id })
     }
 
