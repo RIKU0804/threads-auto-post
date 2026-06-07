@@ -3,8 +3,11 @@ import { resolvePrompt, DEFAULT_TEXT_PROMPT_TEMPLATE } from './prompt-presets'
 import { sanitizeProviderHttpError } from './sanitize-error'
 
 // OpenRouter経由でテキスト生成（コスト最適化）
-// モデル: google/gemini-3.5-flash (高速・低コスト)
-const OPENROUTER_MODEL = 'google/gemini-3.5-flash'
+// モデル: google/gemini-2.5-flash (高速・低コスト・JSON出力が安定)
+// 注: 以前 gemini-3.5-flash を使っていたが、reasoning モデル特性で
+// response_format=json_object でも本文が空/不整合になり「AI応答のパースに失敗しました」が
+// 多発したため、JSON 構造化出力が安定する 2.5-flash に戻した。
+const OPENROUTER_MODEL = 'google/gemini-2.5-flash'
 const REQUEST_TIMEOUT_MS = 60_000
 
 type PostType = 'buzz' | 'empathy' | 'numbers' | 'story' | 'question'
