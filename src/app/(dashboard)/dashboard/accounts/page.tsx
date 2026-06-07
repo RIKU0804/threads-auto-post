@@ -57,7 +57,7 @@ const SETUP_GUIDES: Record<SupportedPlatform, SetupGuide> = {
       '【初回のみ・管理者】Metaでアプリを作成 → ユースケースで「Instagramでメッセージとコンテンツを管理」を選択して作成（Facebookページは不要）',
       '【初回のみ・管理者】左メニュー「Instagram」→「API setup with Instagram login（Instagramログインでのセットアップ）」を開く。以降の値はすべてこの画面にあります',
       '⚠️最重要: その画面の「Instagram アプリ ID」と「アプリシークレット」を ↓の連携パネルの入力欄に貼り付けて保存（アプリ内に暗号化保存）。これは Instagram 専用の値です。「アプリの設定 → ベーシック」にある Facebook(Meta) のアプリIDを入れると「Invalid platform app／このページはご利用いただけません」エラーになります',
-      '【初回のみ・管理者】同じ画面の「ビジネスログインの設定」→「設定する」を開き、リダイレクトURIに ↓の連携パネルに表示される値（「MetaのリダイレクトURIに登録してください」の欄）を完全一致でコピー登録（⚠️「Webhooks」の欄ではありません。「ビジネスログインの設定」の中です）',
+      '【初回のみ・管理者】同じ画面の「Instagramビジネスログインを設定する」→「設定する」を開き、リダイレクトURL欄に ↓の連携パネルに表示される値（「MetaのリダイレクトURIに登録してください」の欄）を完全一致でコピー登録（⚠️「Webhooks」の欄でも、「ビジネス向けFacebookログイン」の設定でもありません。"Instagram"項目の中の「Instagramビジネスログインを設定する」です。名前が似ていて紛らわしいので注意）',
       '⚠️必須: 同じ「API setup with Instagram login」画面の「アクセストークンを生成する」→「アカウントを追加」を押し、連携したいInstagramでログイン →「許可」。これでアカウントがアプリに接続されます（このステップを飛ばすと連携時に「開発者の役割が不十分です」になります。※旧方式の「アプリの役割 → Instagramテスター」は新方式では使いません）',
       '⚠️必須: アプリを「公開（ライブ）」に切り替える（開発モードのままだと連携・投稿でエラーになります）。手順: 先に「アプリ設定 → ベーシック」のプライバシーポリシーURL に「このツールのURL + /privacy」を入れて保存 → 画面上部のトグルを「開発中 → ライブ」に切り替え。自分のアカウントへの投稿は審査(App Review)不要で公開にできます',
       '↓の「Instagramと連携する」ボタンを押す → Instagramのログイン画面で対象アカウントを選び「許可」→ 自動で連携完了（トークン取得・保存まで自動）',
@@ -261,7 +261,7 @@ function InstagramConnectPanel({ onCancel }: { onCancel: () => void }) {
           {redirectUri && (
             <div className="rounded-md border border-amber-200 bg-amber-50 p-2.5">
               <p className="text-[11px] font-medium text-amber-800">
-                Metaの「ビジネスログインの設定」→ リダイレクトURI に、以下を<strong>完全一致</strong>で登録してください：
+                Metaの「Instagram」→「Instagramログインによる API設定」→「<strong>Instagramビジネスログインを設定する</strong>」の リダイレクトURL に、以下を<strong>完全一致</strong>で登録してください（⚠️「ビジネス向け<strong>Facebook</strong>ログイン」の設定ではありません）：
               </p>
               <div className="mt-1.5 flex items-center gap-2">
                 <code className="flex-1 break-all rounded bg-white px-2 py-1.5 font-mono text-[11px] text-gray-800 ring-1 ring-amber-200">
