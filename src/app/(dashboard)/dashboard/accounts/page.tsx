@@ -1,11 +1,12 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { Plus, User, X, AlertCircle, Eye, EyeOff, BookOpen, MessageCircle, Camera, ExternalLink, HelpCircle, Trash2, Copy, Check } from 'lucide-react'
+import { Plus, User, X, AlertCircle, Eye, EyeOff, BookOpen, ExternalLink, HelpCircle, Trash2, Copy, Check } from 'lucide-react'
 import { Card } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
 import { SelectNative } from '@/components/ui/Select'
+import { PLATFORM_BRAND, InstagramIcon, XBrandIcon, type BrandPlatform } from '@/components/ui/BrandIcons'
 import { cx } from '@/lib/utils'
 import { useToast } from '@/components/ui/Toast'
 import { useConfirm } from '@/components/ui/ConfirmDialog'
@@ -13,18 +14,11 @@ import type { Account, ReferenceAccount } from '@/types/database'
 
 type SupportedPlatform = 'threads' | 'instagram' | 'x'
 
-function XIconBrand({ className }: { className?: string }) {
-  return (
-    <svg className={className} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-      <path d="M18.244 2H21l-6.52 7.452L22 22h-6.756l-4.706-6.156L4.97 22H2.21l6.97-7.964L2 2h6.91l4.26 5.62L18.244 2zm-2.36 18h1.638L7.207 4h-1.74l10.417 16z" />
-    </svg>
-  )
-}
-
+// プラットフォームタブ。アイコンは各SNSの本物ブランドロゴ（@remixicon/react）。
 const PLATFORM_TABS: { value: SupportedPlatform; label: string; icon: React.ComponentType<{ className?: string }> }[] = [
-  { value: 'threads',   label: 'Threads',   icon: MessageCircle },
-  { value: 'instagram', label: 'Instagram', icon: Camera },
-  { value: 'x',         label: 'X (Twitter)', icon: XIconBrand },
+  { value: 'threads',   label: 'Threads',     icon: PLATFORM_BRAND.threads.Icon },
+  { value: 'instagram', label: 'Instagram',   icon: PLATFORM_BRAND.instagram.Icon },
+  { value: 'x',         label: 'X (Twitter)', icon: PLATFORM_BRAND.x.Icon },
 ]
 
 // アカウント追加の手順ガイド（実画面の動画は用意できないため、各ステップで「何を押し何を貼るか」を明示）
@@ -275,7 +269,7 @@ function InstagramConnectPanel({ onCancel }: { onCancel: () => void }) {
             loadingText="保存中..."
             className="flex w-full items-center justify-center gap-2 bg-gradient-to-r from-pink-500 via-fuchsia-500 to-orange-400 hover:from-pink-600 hover:via-fuchsia-600 hover:to-orange-500"
           >
-            <Camera className="h-4 w-4" />
+            <InstagramIcon className="h-4 w-4" />
             保存してInstagramと連携する
           </Button>
         </div>
@@ -288,7 +282,7 @@ function InstagramConnectPanel({ onCancel }: { onCancel: () => void }) {
             onClick={goConnect}
             className="flex w-full items-center justify-center gap-2 rounded-md bg-gradient-to-r from-pink-500 via-fuchsia-500 to-orange-400 px-4 py-2.5 text-sm font-medium text-white shadow-xs transition hover:from-pink-600 hover:via-fuchsia-600 hover:to-orange-500"
           >
-            <Camera className="h-4 w-4" />
+            <InstagramIcon className="h-4 w-4" />
             Instagramと連携する
           </button>
           <button
@@ -302,6 +296,53 @@ function InstagramConnectPanel({ onCancel }: { onCancel: () => void }) {
       )}
 
       <SetupGuide key="instagram-oauth" platform="instagram" defaultOpen={false} />
+
+      <Button type="button" variant="secondary" onClick={onCancel} className="w-full">
+        キャンセル
+      </Button>
+    </div>
+  )
+}
+
+// X は OAuth 2.0 (PKCE) でつなぐ。ボタンを押すと X の認可画面へ飛び、許可するだけで連携完了。
+// 4キーの手動貼り付けは「手動で4キー」リンクからのフォールバックとして残す。
+function XConnectPanel({ onManual, onCancel }: { onManual: () => void; onCancel: () => void }) {
+  return (
+    <div className="space-y-4">
+      <div className="rounded-lg border border-gray-200 bg-gray-50 p-4">
+        <p className="text-sm font-semibold text-gray-800">Xと連携</p>
+        <p className="mt-1 text-xs leading-relaxed text-gray-600">
+          ボタンを押すとXの認可画面が開きます。投稿したいアカウントでログインして「アプリを許可」するだけで連携完了です（API Key などの貼り付けは不要）。
+        </p>
+      </div>
+
+      <button
+        type="button"
+        onClick={() => { window.location.href = '/api/auth/x' }}
+        className="flex w-full items-center justify-center gap-2 rounded-md bg-black px-4 py-2.5 text-sm font-medium text-white shadow-xs transition hover:bg-gray-800"
+      >
+        <XBrandIcon className="h-4 w-4 text-white" />
+        Xと連携する
+      </button>
+
+      <div className="rounded-md border border-amber-200 bg-amber-50 p-2.5">
+        <p className="text-[11px] leading-relaxed text-amber-800">
+          ⚠️ 初回のみ管理者設定が必要です。X Developer Portal でアプリの「User authentication settings」を
+          OAuth 2.0（Web App / Confidential client）で有効化し、Callback URI に
+          <code className="mx-1 break-all rounded bg-white px-1 py-0.5 font-mono text-[10px] ring-1 ring-amber-200">
+            https://threads-auto-post-umber.vercel.app/api/auth/x/callback
+          </code>
+          を登録、Client ID / Secret を環境変数（X_OAUTH_CLIENT_ID / X_OAUTH_CLIENT_SECRET / X_OAUTH_REDIRECT_URI）に設定してください。
+        </p>
+      </div>
+
+      <button
+        type="button"
+        onClick={onManual}
+        className="w-full text-center text-[11px] text-gray-400 hover:text-gray-600"
+      >
+        うまくいかない場合：手動で4キーを貼って追加（旧方式）
+      </button>
 
       <Button type="button" variant="secondary" onClick={onCancel} className="w-full">
         キャンセル
@@ -451,6 +492,8 @@ export default function AccountsPage() {
   const [formError, setFormError] = useState('')
   const [successMsg, setSuccessMsg] = useState('')
   const [platform, setPlatform] = useState<SupportedPlatform>('threads')
+  // X タブ: false=OAuth連携パネル / true=手動4キー入力（フォールバック）
+  const [xManual, setXManual] = useState(false)
   const [form, setForm] = useState({
     name: '',
     persona: PERSONAS[0].value,
@@ -480,15 +523,19 @@ export default function AccountsPage() {
     const plat = params.get('platform')
     if (!success && !error) return
     if (success) {
-      toast.success(`${plat === 'instagram' ? 'Instagram' : plat ?? ''}と連携しました`)
+      const labelMap: Record<string, string> = { instagram: 'Instagram', x: 'X', threads: 'Threads', tiktok: 'TikTok', youtube: 'YouTube' }
+      toast.success(`${(plat && labelMap[plat]) || plat || ''}と連携しました`)
     } else if (error) {
       const map: Record<string, string> = {
         app_not_configured: 'Instagram アプリ ID / シークレットが未設定です。連携パネルで入力してください',
-        server_misconfigured: '連携の設定が不足しています（管理者に連絡してください）',
+        server_misconfigured: '連携の設定が不足しています（X_OAUTH_* / ENCRYPTION_KEY などの環境変数を確認してください）',
         token_exchange_failed: '連携に失敗しました。もう一度お試しください',
+        userinfo_failed: 'ユーザー情報の取得に失敗しました。もう一度お試しください',
+        missing_params: '連携に必要な情報が不足しています。もう一度お試しください',
         state_mismatch: 'セッションが切れました。もう一度お試しください',
         state_missing: 'セッションが切れました。もう一度お試しください',
-        provider_error: 'Instagram側で許可されませんでした',
+        provider_error: '連携が許可されませんでした',
+        db_error: '保存に失敗しました。もう一度お試しください',
         unauthorized: 'ログインが必要です',
       }
       toast.error(map[error] ?? `連携に失敗しました（${error}）`)
@@ -515,6 +562,7 @@ export default function AccountsPage() {
       clientSecret: '',
     })
     setPlatform('threads')
+    setXManual(false)
     setFormError('')
     setShowToken(false)
     setShowSecret(false)
@@ -632,21 +680,19 @@ export default function AccountsPage() {
             <p className="mt-0.5 text-xs text-gray-400">「アカウント追加」から登録してください</p>
           </Card>
         ) : (
-          accounts.map(account => (
+          accounts.map(account => {
+            // 各SNSの本物ブランドロゴ + ブランド色タイル。未対応プラットフォームは中立表示。
+            const brand = PLATFORM_BRAND[account.platform as BrandPlatform]
+            const BrandIcon = brand?.Icon ?? User
+            return (
             <Card key={account.id} className="p-5">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
                   <div className={cx(
                     'flex h-9 w-9 shrink-0 items-center justify-center rounded-lg',
-                    account.platform === 'instagram' ? 'bg-pink-50'
-                      : account.platform === 'x' ? 'bg-black'
-                      : 'bg-[#E9F7F9]',
+                    brand?.tile ?? 'bg-gray-100',
                   )}>
-                    {account.platform === 'instagram'
-                      ? <Camera className="h-4 w-4 text-pink-500" />
-                      : account.platform === 'x'
-                        ? <XIconBrand className="h-3.5 w-3.5 text-white" />
-                        : <MessageCircle className="h-4 w-4 text-[#00A3BF]" />}
+                    <BrandIcon className={cx('h-4 w-4', brand ? 'text-white' : 'text-gray-400')} aria-hidden />
                   </div>
                   <div>
                     <div className="flex items-center gap-2">
@@ -695,7 +741,8 @@ export default function AccountsPage() {
                 </div>
               </div>
             </Card>
-          ))
+            )
+          })
         )}
       </div>
 
@@ -751,7 +798,11 @@ export default function AccountsPage() {
                   <InstagramConnectPanel onCancel={closeForm} />
                 )}
 
-                {platform !== 'instagram' && (<>
+                {platform === 'x' && !xManual && (
+                  <XConnectPanel onManual={() => setXManual(true)} onCancel={closeForm} />
+                )}
+
+                {(platform === 'threads' || (platform === 'x' && xManual)) && (<>
                 <div>
                   <FieldLabel>アカウント名</FieldLabel>
                   <Input

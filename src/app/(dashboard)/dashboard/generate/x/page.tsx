@@ -1,56 +1,34 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import {
-  Sparkles, Send, Save, RefreshCw, ChevronLeft,
-  CheckCircle, Lightbulb, Scissors, Plus, X as XIcon,
-  ImageIcon, Wand2,
-} from 'lucide-react'
-import Link from 'next/link'
+import { RefreshCw, Save, Send, Scissors, Plus, X } from 'lucide-react'
 import { Card } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
 import { Textarea } from '@/components/ui/Textarea'
-import { AccountPromptPanel } from '@/components/generate/AccountPromptPanel'
+import {
+  GenerateLayout, GenerateHeader, DoneScreen, DemoModeNotice,
+  ThemeField, PostTypeGrid, ThemePreviewRow, GenerateButton,
+  SectionLabel, CharCounter, SELECT_CLASS, type PostTypeOption,
+} from '@/components/generate/GenerateParts'
+import { ReferencePanel, type ReferenceImage } from '@/components/generate/ReferencePanel'
+import { ImagePanel } from '@/components/generate/ImagePanel'
 import { cx } from '@/lib/utils'
 import { useToast } from '@/components/ui/Toast'
 import { useThemeSuggestions } from '@/lib/hooks/use-theme-suggestions'
-import type { Account, Post } from '@/types/database'
+import type { Account, Post, ReferenceAccount } from '@/types/database'
 
 type Step = 'input' | 'preview' | 'done'
 type PostMode = 'single' | 'thread'
 
-const X_POST_TYPES = [
+const X_POST_TYPES: readonly PostTypeOption[] = [
   { value: 'insight',  label: '気づき型',   desc: '学び・発見',    emoji: '💡' },
   { value: 'hook',     label: 'フック型',   desc: '最初1行で掴む', emoji: '🪝' },
   { value: 'list',     label: 'リスト型',   desc: 'N個の〇〇',    emoji: '📋' },
   { value: 'story',    label: 'ストーリー型', desc: '体験談',       emoji: '📖' },
   { value: 'question', label: '問いかけ型', desc: 'RT/返信誘導',   emoji: '💬' },
-] as const
-
-type XPostType = typeof X_POST_TYPES[number]['value']
+]
 
 const X_LIMIT = 280
-
-function SectionLabel({ children }: { children: React.ReactNode }) {
-  return (
-    <p className="mb-1.5 text-xs font-semibold uppercase tracking-wider text-gray-500">
-      {children}
-    </p>
-  )
-}
-
-function CharCounter({ text, limit = X_LIMIT }: { text: string; limit?: number }) {
-  const len = [...text].length
-  const remaining = limit - len
-  return (
-    <span className={cx(
-      'text-xs tabular-nums',
-      remaining < 0 ? 'text-red-500 font-semibold' : remaining < 20 ? 'text-amber-500' : 'text-gray-400'
-    )}>
-      {remaining}
-    </span>
-  )
-}
 
 export default function XGeneratePage() {
   const toast = useToast()
@@ -58,7 +36,7 @@ export default function XGeneratePage() {
   const [accounts, setAccounts] = useState<Account[]>([])
   const [selectedAccount, setSelectedAccount] = useState('')
   const [theme, setTheme] = useState('')
-  const [postType, setPostType] = useState<XPostType | ''>('')
+  const [postType, setPostType] = useState<string>('')
   const [postMode, setPostMode] = useState<PostMode>('single')
   const [step, setStep] = useState<Step>('input')
   const [loading, setLoading] = useState(false)
@@ -78,19 +56,31 @@ export default function XGeneratePage() {
   const [imageEditPrompt, setImageEditPrompt] = useState('')
   const [imageEditing, setImageEditing] = useState(false)
 
+  const [referenceAccounts, setReferenceAccounts] = useState<ReferenceAccount[]>([])
+  const [showReference, setShowReference] = useState(false)
+  const [selectedRefAccount, setSelectedRefAccount] = useState('')
+  const [referencePost, setReferencePost] = useState('')
+  const [referenceImage, setReferenceImage] = useState<ReferenceImage | null>(null)
+
   const { themeSuggestions, setThemeSuggestions, suggestLoading, suggestThemes } = useThemeSuggestions(selectedAccount)
 
   useEffect(() => {
     const ctrl = new AbortController()
     async function loadInitial() {
       try {
-        const res = await fetch('/api/accounts', { signal: ctrl.signal })
-        const raw: unknown = res.ok ? await res.json() : []
+        const [accsRes, refsRes] = await Promise.all([
+          fetch('/api/accounts', { signal: ctrl.signal }),
+          fetch('/api/reference-accounts', { signal: ctrl.signal }),
+        ])
+        const accsRaw: unknown = accsRes.ok ? await accsRes.json() : []
+        const refsRaw: unknown = refsRes.ok ? await refsRes.json() : []
         if (ctrl.signal.aborted) return
-        const accs = Array.isArray(raw) ? (raw as Account[]) : []
+        const accs = Array.isArray(accsRaw) ? (accsRaw as Account[]) : []
+        const refs = Array.isArray(refsRaw) ? (refsRaw as ReferenceAccount[]) : []
         const xAccounts = accs.filter(a => a.platform === 'x')
         setAccounts(xAccounts)
         if (xAccounts.length > 0) setSelectedAccount(xAccounts[0].id)
+        setReferenceAccounts(refs)
       } catch (e) {
         if (e instanceof DOMException && e.name === 'AbortError') return
         console.error('[generate/x] initial load failed', e instanceof Error ? e.message : 'unknown')
@@ -103,6 +93,8 @@ export default function XGeneratePage() {
   }, [])
 
   const isDemoMode = !selectedAccount
+  const selectedRefName = referenceAccounts.find(r => r.id === selectedRefAccount)?.name
+  const hasReference = !!(referencePost.trim() || referenceImage)
 
   async function handleGenerate(overrideTheme?: string) {
     const targetTheme = overrideTheme ?? theme
@@ -119,6 +111,8 @@ export default function XGeneratePage() {
           postType: postType || undefined,
           platform: 'x',
           mode: postMode,
+          referencePost: referencePost.trim() || undefined,
+          referenceAccountName: selectedRefName || undefined,
           draftId: draftId ?? undefined,
         }),
       })
@@ -181,6 +175,8 @@ export default function XGeneratePage() {
           accountId: selectedAccount || undefined,
           postContent: base,
           style: 'diagram',
+          referenceImageBase64: referenceImage?.base64,
+          referenceImageMimeType: referenceImage?.mimeType,
         }),
       })
       const data = await res.json() as { imageUrl: string; prompt?: string; error?: string }
@@ -213,6 +209,20 @@ export default function XGeneratePage() {
     } finally {
       setImageEditing(false)
     }
+  }
+
+  function handleReferenceImageUpload(file: File) {
+    if (file.size > 5 * 1024 * 1024) { toast.error('画像サイズは5MB以下にしてください'); return }
+    if (!file.type.startsWith('image/')) { toast.error('画像ファイルを選択してください'); return }
+    const reader = new FileReader()
+    reader.onload = () => {
+      const result = reader.result as string
+      setReferenceImage({
+        base64: result.replace(/^data:image\/[^;]+;base64,/, ''),
+        mimeType: file.type,
+      })
+    }
+    reader.readAsDataURL(file)
   }
 
   async function handleSave(publish = false) {
@@ -282,70 +292,31 @@ export default function XGeneratePage() {
     setSavedPost(null)
     setDraftId(null)
     setThemeSuggestions([])
+    setReferencePost('')
+    setSelectedRefAccount('')
+    setShowReference(false)
+    setReferenceImage(null)
   }
 
   if (step === 'done') {
     return (
-      <div className="p-6 lg:p-8 max-w-2xl">
-        <Card className="py-12 text-center">
-          <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-green-50">
-            <CheckCircle className="h-6 w-6 text-green-600" />
-          </div>
-          <h2 className="text-lg font-semibold text-gray-900">
-            {savedPost?.status === 'posted' ? '投稿しました！' : '保存しました！'}
-          </h2>
-          <p className="mt-1 text-sm text-gray-500">
-            {savedPost?.status === 'posted'
-              ? 'Xに投稿されました'
-              : '下書きとして保存されました'}
-          </p>
-          <Button onClick={handleReset} className="mt-6 gap-2" style={{ backgroundColor: '#000', borderColor: '#000' }}>
-            <Sparkles className="h-4 w-4" />
-            新しい投稿を生成する
-          </Button>
-        </Card>
-      </div>
+      <DoneScreen
+        posted={savedPost?.status === 'posted'}
+        platformLabel="X"
+        onReset={handleReset}
+      />
     )
   }
 
   return (
-    <div className={cx('p-6 lg:p-8', showPrompt ? 'max-w-5xl lg:flex lg:items-start lg:gap-6' : 'max-w-3xl mx-auto')}>
-      <div className="min-w-0 lg:flex-1">
-        <div className="mb-4 hidden justify-end lg:flex">
-          <button
-            type="button"
-            onClick={() => setShowPrompt(v => !v)}
-            className="inline-flex items-center gap-1.5 rounded-md border border-[#e5edf5] bg-white px-3 py-1.5 text-xs font-medium text-gray-600 transition hover:border-[#00A3BF] hover:text-[#006F83]"
-          >
-            {showPrompt ? '✕ プロンプトを閉じる' : '⚙ プロンプトを編集'}
-          </button>
-        </div>
-      {/* Header */}
-      <div className="mb-6 flex items-start justify-between">
-        <div>
-          <div className="flex items-center gap-2 mb-1">
-            <Link href="/dashboard/generate" className="flex items-center gap-1 text-sm text-gray-400 hover:text-gray-600 transition-colors">
-              <ChevronLeft className="h-4 w-4" />
-              戻る
-            </Link>
-          </div>
-          <div className="flex items-center gap-2">
-            <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-black">
-              <XIcon className="h-4 w-4 text-white" />
-            </div>
-            <h1 className="text-xl font-semibold lg:text-2xl" style={{ color: '#061b31' }}>
-              X 投稿生成
-            </h1>
-          </div>
-          <p className="mt-0.5 text-sm text-gray-500 ml-9">テキスト + 図解画像を生成してXに投稿</p>
-        </div>
-        {step === 'preview' && (
-          <button onClick={() => setStep('input')} className="mt-6 flex items-center gap-1 text-sm text-gray-400 hover:text-gray-600 transition-colors">
-            <ChevronLeft className="h-4 w-4" />
-            入力に戻る
-          </button>
-        )}
-      </div>
+    <GenerateLayout showPrompt={showPrompt} onTogglePrompt={() => setShowPrompt(v => !v)} accountId={selectedAccount}>
+      <GenerateHeader
+        platform="x"
+        title="X 投稿生成"
+        subtitle="テキスト + 図解画像を生成してXに投稿"
+        showBackToInput={step === 'preview'}
+        onBackToInput={() => setStep('input')}
+      />
 
       {/* Step 1: 入力 */}
       {step === 'input' && (
@@ -356,7 +327,9 @@ export default function XGeneratePage() {
               <SectionLabel>アカウント</SectionLabel>
               {accounts.length === 0 ? (
                 <div className="flex items-center gap-2 rounded-md border border-[#e5edf5] bg-[#F8FAFC] px-3 py-2">
-                  <span className="rounded-full bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-600">デモモード</span>
+                  <span className="inline-flex items-center rounded-full bg-[#E9F7F9] px-2 py-0.5 text-xs font-medium text-[#006F83]">
+                    デモモード
+                  </span>
                   <span className="text-sm text-gray-500">デフォルト設定で生成します</span>
                 </div>
               ) : (
@@ -364,9 +337,9 @@ export default function XGeneratePage() {
                   value={selectedAccount}
                   onChange={e => setSelectedAccount(e.target.value)}
                   aria-label="投稿先アカウント"
-                  className="w-full appearance-none rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-hidden transition focus:border-gray-700 focus:ring-2 focus:ring-gray-700/10"
+                  className={SELECT_CLASS}
                 >
-                  <option value="">デモモード</option>
+                  <option value="">デモモード（デフォルト設定）</option>
                   {accounts.map(a => <option key={a.id} value={a.id}>{a.name} (@{a.x_user_id})</option>)}
                 </select>
               )}
@@ -384,8 +357,8 @@ export default function XGeneratePage() {
                     className={cx(
                       'flex-1 rounded-lg border py-2.5 text-sm font-medium transition-all',
                       postMode === mode
-                        ? 'border-gray-800 bg-gray-900 text-white'
-                        : 'border-[#e5edf5] bg-white text-gray-600 hover:border-gray-300'
+                        ? 'border-[#00A3BF] bg-[#E9F7F9] text-[#006F83]'
+                        : 'border-[#e5edf5] bg-white text-gray-600 hover:border-[#c8d8e8]',
                     )}
                   >
                     {mode === 'single' ? '単発ツイート' : 'スレッド'}
@@ -400,122 +373,58 @@ export default function XGeneratePage() {
             </div>
 
             {/* テーマ */}
-            <div>
-              <div className="mb-1.5 flex items-center justify-between">
-                <SectionLabel>投稿テーマ</SectionLabel>
-                <button
-                  onClick={suggestThemes}
-                  disabled={suggestLoading}
-                  className="flex items-center gap-1 text-xs font-medium text-gray-600 hover:text-gray-800 disabled:opacity-50 transition-colors"
-                >
-                  <Lightbulb className={cx('h-3 w-3', suggestLoading && 'animate-pulse')} />
-                  {suggestLoading ? '考え中...' : 'テーマを提案'}
-                </button>
-              </div>
-              {themeSuggestions.length > 0 && (
-                <div className="mb-2 flex flex-wrap gap-1.5">
-                  {themeSuggestions.map(t => (
-                    <button
-                      key={t}
-                      onClick={() => { setTheme(t); setThemeSuggestions([]) }}
-                      className={cx(
-                        'rounded-full border px-3 py-1 text-xs transition-all text-left',
-                        theme === t
-                          ? 'border-gray-800 bg-gray-900 text-white'
-                          : 'border-[#e5edf5] bg-white text-gray-600 hover:border-gray-400'
-                      )}
-                    >
-                      {t}
-                    </button>
-                  ))}
-                </div>
-              )}
-              <input
-                value={theme}
-                onChange={e => setTheme(e.target.value)}
-                onKeyDown={e => e.key === 'Enter' && !e.nativeEvent.isComposing && handleGenerate()}
-                placeholder="例：毎日継続するための3つのコツ、AIで仕事が楽になった話"
-                aria-label="投稿テーマ"
-                className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-hidden transition placeholder-gray-400 focus:border-gray-700 focus:ring-2 focus:ring-gray-700/10"
-              />
-            </div>
+            <ThemeField
+              theme={theme}
+              setTheme={setTheme}
+              onGenerate={() => handleGenerate()}
+              suggestThemes={suggestThemes}
+              suggestLoading={suggestLoading}
+              suggestions={themeSuggestions}
+              onPickSuggestion={t => { setTheme(t); setThemeSuggestions([]) }}
+              placeholder="例：毎日継続するための3つのコツ、AIで仕事が楽になった話"
+            />
           </Card>
 
-          {/* 投稿の型 */}
-          <div>
-            <div className="mb-2 flex items-center justify-between">
-              <SectionLabel>投稿の型</SectionLabel>
-              <span className="text-xs text-gray-400">任意</span>
-            </div>
-            <div className="grid grid-cols-3 gap-2 sm:grid-cols-5">
-              {X_POST_TYPES.map(t => (
-                <button
-                  key={t.value}
-                  type="button"
-                  onClick={() => setPostType(postType === t.value ? '' : t.value)}
-                  className={cx(
-                    'flex flex-col items-center gap-1 rounded-lg border py-3 px-2 text-center transition-all',
-                    postType === t.value
-                      ? 'border-gray-800 bg-gray-900 text-white'
-                      : 'border-[#e5edf5] bg-white hover:border-gray-300 hover:bg-gray-50'
-                  )}
-                >
-                  <span className="text-xl leading-none">{t.emoji}</span>
-                  <span className={cx('text-xs font-medium leading-tight', postType === t.value ? 'text-white' : 'text-gray-700')}>
-                    {t.label}
-                  </span>
-                  <span className={cx('text-[10px] leading-tight', postType === t.value ? 'text-gray-300' : 'text-gray-400')}>
-                    {t.desc}
-                  </span>
-                </button>
-              ))}
-            </div>
-          </div>
+          <PostTypeGrid options={X_POST_TYPES} value={postType} onChange={setPostType} />
 
-          <div>
-            <Button
-              onClick={() => handleGenerate()}
-              disabled={!theme.trim()}
-              isLoading={loading}
-              loadingText="生成中..."
-              className="w-full gap-2 py-2.5"
-              style={theme.trim() ? { backgroundColor: '#000', borderColor: '#000' } : {}}
-            >
-              <Sparkles className="h-4 w-4" />
-              AI生成する
-            </Button>
-            {!theme.trim() && !loading && (
-              <p className="mt-1.5 text-center text-xs text-gray-400">
-                💡 投稿テーマを入力すると生成できます
-              </p>
-            )}
-          </div>
+          <ReferencePanel
+            open={showReference}
+            onToggle={() => setShowReference(v => !v)}
+            referenceAccounts={referenceAccounts}
+            selectedRefAccount={selectedRefAccount}
+            setSelectedRefAccount={setSelectedRefAccount}
+            referencePost={referencePost}
+            setReferencePost={setReferencePost}
+            referenceImage={referenceImage}
+            setReferenceImage={setReferenceImage}
+            onUploadImage={handleReferenceImageUpload}
+          />
+
+          <GenerateButton onGenerate={() => handleGenerate()} disabled={!theme.trim()} loading={loading} />
         </div>
       )}
 
       {/* Step 2: プレビュー */}
       {step === 'preview' && (
         <div className="space-y-4">
-          {isDemoMode && (
-            <div className="flex items-center justify-between rounded-md border border-[#e5edf5] bg-[#F8FAFC] px-4 py-2.5">
-              <div className="flex items-center gap-2">
-                <span className="rounded-full bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-600">デモモード</span>
-                <span className="text-xs text-gray-500">下書き保存のみ可能です</span>
-              </div>
-            </div>
-          )}
+          {isDemoMode && <DemoModeNotice />}
 
-          <div className="flex items-center gap-2 text-sm text-gray-500">
-            <span className="text-xs font-semibold uppercase tracking-wider text-gray-400">テーマ</span>
-            <span className="text-gray-700">{theme}</span>
-            <span className={cx(
-              'rounded-full px-2 py-0.5 text-[10px] font-medium',
-              postMode === 'thread' ? 'bg-gray-100 text-gray-600' : 'bg-gray-100 text-gray-600'
-            )}>
-              {postMode === 'thread' ? `スレッド ${threadParts.length}件` : '単発'}
-            </span>
-            <button onClick={() => setStep('input')} className="ml-auto text-xs text-gray-500 hover:underline">変更</button>
-          </div>
+          <ThemePreviewRow
+            theme={theme}
+            onEdit={() => setStep('input')}
+            badges={
+              <>
+                <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[10px] font-medium text-gray-600">
+                  {postMode === 'thread' ? `スレッド ${threadParts.length}件` : '単発'}
+                </span>
+                {hasReference && (
+                  <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-medium text-amber-600">
+                    参考{referencePost.trim() && referenceImage ? '投稿+画像' : referenceImage ? '画像' : '投稿'}あり
+                  </span>
+                )}
+              </>
+            }
+          />
 
           {/* 単発ツイート */}
           {postMode === 'single' && (
@@ -525,13 +434,13 @@ export default function XGeneratePage() {
                 <div className="flex items-center gap-3">
                   <button
                     onClick={splitIntoThread}
-                    className="flex items-center gap-1 text-xs font-medium text-gray-500 hover:text-gray-800 transition-colors"
+                    className="flex items-center gap-1 text-xs font-medium text-[#006F83] transition-colors hover:text-[#005A6B]"
                     title="スレッドに変換"
                   >
                     <Scissors className="h-3 w-3" />
                     スレッド化
                   </button>
-                  <button onClick={() => handleGenerate()} disabled={loading} className="flex items-center gap-1 text-xs font-medium text-gray-600 hover:text-gray-800 disabled:opacity-50">
+                  <button onClick={() => handleGenerate()} disabled={loading} className="flex items-center gap-1 text-xs font-medium text-[#006F83] transition-colors hover:text-[#005A6B] disabled:opacity-50">
                     <RefreshCw className={cx('h-3 w-3', loading && 'animate-spin')} />
                     再生成
                   </button>
@@ -543,12 +452,8 @@ export default function XGeneratePage() {
                 rows={6}
                 className="resize-none border-none bg-transparent p-0 shadow-none focus:ring-0"
               />
-              <div className="flex items-center justify-between border-t border-gray-100 pt-2">
-                <CharCounter text={generatedText} />
-                <div className={cx(
-                  'h-1.5 w-1.5 rounded-full',
-                  [...generatedText].length > X_LIMIT ? 'bg-red-400' : [...generatedText].length > 240 ? 'bg-yellow-400' : 'bg-green-500'
-                )} />
+              <div className="flex items-center justify-end border-t border-gray-100 pt-2">
+                <CharCounter text={generatedText} limit={X_LIMIT} />
               </div>
             </Card>
           )}
@@ -563,7 +468,7 @@ export default function XGeneratePage() {
                     {threadParts.length} 件のツイート
                   </span>
                 </div>
-                <button onClick={() => handleGenerate()} disabled={loading} className="flex items-center gap-1 text-xs font-medium text-gray-600 hover:text-gray-800 disabled:opacity-50">
+                <button onClick={() => handleGenerate()} disabled={loading} className="flex items-center gap-1 text-xs font-medium text-[#006F83] transition-colors hover:text-[#005A6B] disabled:opacity-50">
                   <RefreshCw className={cx('h-3 w-3', loading && 'animate-spin')} />
                   再生成
                 </button>
@@ -576,9 +481,10 @@ export default function XGeneratePage() {
                     {threadParts.length > 1 && (
                       <button
                         onClick={() => setThreadParts(prev => prev.filter((_, j) => j !== i))}
-                        className="text-xs text-gray-400 hover:text-red-500 transition-colors"
+                        className="text-gray-400 transition-colors hover:text-red-500"
+                        aria-label={`${i + 1}件目のツイートを削除`}
                       >
-                        <XIcon className="h-3 w-3" />
+                        <X className="h-3 w-3" />
                       </button>
                     )}
                   </div>
@@ -586,17 +492,17 @@ export default function XGeneratePage() {
                     value={part}
                     onChange={e => setThreadParts(prev => prev.map((p, j) => j === i ? e.target.value : p))}
                     rows={4}
-                    className="resize-none border-none bg-transparent p-0 shadow-none focus:ring-0 text-sm"
+                    className="resize-none border-none bg-transparent p-0 text-sm shadow-none focus:ring-0"
                   />
                   <div className="flex justify-end border-t border-gray-100 pt-1.5">
-                    <CharCounter text={part} />
+                    <CharCounter text={part} limit={X_LIMIT} />
                   </div>
                 </Card>
               ))}
 
               <button
                 onClick={() => setThreadParts(prev => [...prev, ''])}
-                className="flex w-full items-center justify-center gap-2 rounded-lg border-2 border-dashed border-gray-200 py-2.5 text-sm text-gray-400 hover:border-gray-400 hover:text-gray-600 transition-colors"
+                className="flex w-full items-center justify-center gap-2 rounded-lg border-2 border-dashed border-[#e5edf5] py-2.5 text-sm text-gray-400 transition-colors hover:border-[#00A3BF] hover:text-[#006F83]"
               >
                 <Plus className="h-4 w-4" />
                 ツイートを追加
@@ -605,54 +511,24 @@ export default function XGeneratePage() {
           )}
 
           {/* 図解画像 */}
-          <Card className="space-y-3">
-            <div className="flex items-center justify-between">
-              <SectionLabel>図解画像</SectionLabel>
-              <button onClick={handleGenerateImage} disabled={imageLoading} className="flex items-center gap-1 text-xs font-medium text-gray-600 hover:text-gray-900 disabled:opacity-50">
-                <ImageIcon className="h-3 w-3" />
-                {imageLoading ? '生成中...' : imageUrl ? '再生成' : '図解を生成'}
-              </button>
-            </div>
-            {imageUrl ? (
-              <>
-                <img src={imageUrl} alt="生成された図解" className="w-full rounded-md" />
-                <div className="mt-2 flex flex-col gap-2 sm:flex-row">
-                  <input
-                    value={imageEditPrompt}
-                    onChange={e => setImageEditPrompt(e.target.value)}
-                    onKeyDown={e => e.key === 'Enter' && !e.nativeEvent.isComposing && handleEditImage()}
-                    placeholder="修正指示（例：背景を青に、テキストを日本語に）"
-                    disabled={imageEditing}
-                    className="min-w-0 flex-1 rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-hidden placeholder-gray-400 transition focus:border-gray-700 focus:ring-2 focus:ring-gray-700/10 disabled:opacity-50"
-                  />
-                  <button
-                    onClick={handleEditImage}
-                    disabled={!imageEditPrompt.trim() || imageEditing}
-                    className="flex w-full items-center justify-center gap-1.5 rounded-md bg-black px-3 py-2 text-xs font-medium text-white transition hover:bg-gray-800 disabled:opacity-40 sm:w-auto sm:shrink-0"
-                  >
-                    <Wand2 className={cx('h-3.5 w-3.5', imageEditing && 'animate-pulse')} />
-                    {imageEditing ? '修正中...' : '修正'}
-                  </button>
-                </div>
-                <p className="text-[11px] text-gray-400">スレッドの場合は1件目のツイートに添付されます</p>
-                {imagePrompt && (
-                  <details className="mt-2 rounded-md border border-gray-200 bg-gray-50 px-3 py-2">
-                    <summary className="cursor-pointer text-[11px] font-medium text-gray-600 hover:text-gray-900">
-                      🔍 画像生成プロンプトを表示
-                    </summary>
-                    <pre className="mt-2 max-h-60 overflow-auto whitespace-pre-wrap break-words text-[11px] leading-relaxed text-gray-700">
-                      {imagePrompt}
-                    </pre>
-                  </details>
-                )}
-              </>
-            ) : (
-              <div className="flex h-32 flex-col items-center justify-center gap-2 rounded-md border-2 border-dashed border-[#e5edf5]">
-                <ImageIcon className="h-5 w-5 text-gray-300" />
-                <span className="text-xs text-gray-400">「図解を生成」ボタンで追加（任意）</span>
-              </div>
+          <ImagePanel
+            label="図解画像"
+            generateLabel="図解を生成"
+            imageUrl={imageUrl}
+            imageLoading={imageLoading}
+            imageEditPrompt={imageEditPrompt}
+            setImageEditPrompt={setImageEditPrompt}
+            imageEditing={imageEditing}
+            onGenerate={handleGenerateImage}
+            onEdit={handleEditImage}
+            imagePrompt={imagePrompt}
+            badge={referenceImage && (
+              <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-medium text-amber-600">参考画像でテイスト適用</span>
             )}
-          </Card>
+            footnote="スレッドの場合は1件目のツイートに添付されます"
+            emptyText="「図解を生成」ボタンで追加（任意）"
+            imageAlt="生成された図解"
+          />
 
           {/* アクション */}
           <div className="flex gap-3">
@@ -667,7 +543,6 @@ export default function XGeneratePage() {
                 isLoading={loading}
                 loadingText="投稿中..."
                 className="flex-1 gap-2"
-                style={{ backgroundColor: '#000', borderColor: '#000' }}
               >
                 <Send className="h-4 w-4" />
                 今すぐ投稿
@@ -676,32 +551,6 @@ export default function XGeneratePage() {
           </div>
         </div>
       )}
-
-        {/* モバイル/中画面: フォーム下に折りたたみ */}
-        <details className="mt-6 rounded-lg border border-[#e5edf5] bg-white p-4 lg:hidden">
-          <summary className="cursor-pointer select-none text-sm font-semibold text-gray-700">
-            このアカウントで使われるプロンプトを表示
-          </summary>
-          <div className="mt-3">
-            <AccountPromptPanel accountId={selectedAccount} />
-          </div>
-        </details>
-      </div>
-
-      {/* lg以上: トグルで表示するプロンプト編集パネル */}
-      {showPrompt && (
-      <aside className="mt-6 hidden w-full lg:mt-0 lg:block lg:w-80 lg:shrink-0 lg:sticky lg:top-6">
-        <div
-          className="relative w-full rounded-lg bg-white p-5 text-left"
-          style={{
-            border: '1px solid #e5edf5',
-            boxShadow: 'rgba(50,50,93,0.08) 0px 8px 20px -8px, rgba(0,0,0,0.05) 0px 5px 10px -5px',
-          }}
-        >
-          <AccountPromptPanel accountId={selectedAccount} />
-        </div>
-      </aside>
-      )}
-    </div>
+    </GenerateLayout>
   )
 }

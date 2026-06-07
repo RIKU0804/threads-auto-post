@@ -1,16 +1,18 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import {
-  Sparkles, ImageIcon, Send, Save, RefreshCw, ChevronLeft,
-  CheckCircle, Lightbulb, Wand2, BookOpen, ChevronDown, ChevronUp,
-  X, Upload, Camera, AlertCircle,
-} from 'lucide-react'
+import { RefreshCw, Save, Send, AlertCircle } from 'lucide-react'
 import Link from 'next/link'
 import { Card } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
 import { Textarea } from '@/components/ui/Textarea'
-import { AccountPromptPanel } from '@/components/generate/AccountPromptPanel'
+import {
+  GenerateLayout, GenerateHeader, DoneScreen, DemoModeNotice,
+  ThemeField, PostTypeGrid, ThemePreviewRow, GenerateButton,
+  SectionLabel, CharCounter, SELECT_CLASS, type PostTypeOption,
+} from '@/components/generate/GenerateParts'
+import { ReferencePanel, type ReferenceImage } from '@/components/generate/ReferencePanel'
+import { ImagePanel } from '@/components/generate/ImagePanel'
 import { cx } from '@/lib/utils'
 import { useToast } from '@/components/ui/Toast'
 import { useThemeSuggestions } from '@/lib/hooks/use-theme-suggestions'
@@ -19,24 +21,16 @@ import type { Account, Post, ReferenceAccount } from '@/types/database'
 type Step = 'input' | 'preview' | 'done'
 type PostType = 'buzz' | 'empathy' | 'numbers' | 'story' | 'question'
 
-const POST_TYPES: { value: PostType; label: string; desc: string; emoji: string }[] = [
+// Instagram caption: 最大2200文字 / ハッシュタグ最大30個
+const IG_CAPTION_MAX = 2200
+
+const POST_TYPES: readonly PostTypeOption[] = [
   { value: 'buzz',     label: 'バズ型',      desc: '逆説・驚き',   emoji: '⚡' },
   { value: 'empathy',  label: '共感型',      desc: '心の声代弁',  emoji: '🤝' },
   { value: 'numbers',  label: '数字型',      desc: '具体数字',    emoji: '📊' },
   { value: 'story',    label: 'ストーリー型', desc: '起承転結',    emoji: '📖' },
   { value: 'question', label: '問いかけ型',  desc: 'コメント誘導', emoji: '💬' },
 ]
-
-// Instagram caption: 最大2200文字 / ハッシュタグ最大30個
-const IG_CAPTION_MAX = 2200
-
-function SectionLabel({ children }: { children: React.ReactNode }) {
-  return (
-    <p className="mb-1.5 text-xs font-semibold uppercase tracking-wider text-gray-500">
-      {children}
-    </p>
-  )
-}
 
 export default function InstagramGeneratePage() {
   const toast = useToast()
@@ -61,7 +55,7 @@ export default function InstagramGeneratePage() {
   const [showReference, setShowReference] = useState(false)
   const [selectedRefAccount, setSelectedRefAccount] = useState('')
   const [referencePost, setReferencePost] = useState('')
-  const [referenceImage, setReferenceImage] = useState<{ base64: string; mimeType: string } | null>(null)
+  const [referenceImage, setReferenceImage] = useState<ReferenceImage | null>(null)
 
   const { themeSuggestions, setThemeSuggestions, suggestLoading, suggestThemes } = useThemeSuggestions(selectedAccount)
 
@@ -96,7 +90,8 @@ export default function InstagramGeneratePage() {
   const isDemoMode = !selectedAccount
   const selectedRefName = referenceAccounts.find(r => r.id === selectedRefAccount)?.name
 
-  const captionOver = generatedText.length > IG_CAPTION_MAX
+  const captionLen = [...generatedText].length
+  const captionOver = captionLen > IG_CAPTION_MAX
 
   async function handleGenerate(overrideTheme?: string) {
     const targetTheme = overrideTheme ?? theme
@@ -268,72 +263,25 @@ export default function InstagramGeneratePage() {
 
   if (step === 'done') {
     return (
-      <div className="p-6 lg:p-8 max-w-2xl">
-        <Card className="py-12 text-center">
-          <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-green-50">
-            <CheckCircle className="h-6 w-6 text-green-600" />
-          </div>
-          <h2 className="text-lg font-semibold text-gray-900">
-            {savedPost?.status === 'posted' ? '投稿しました！' : '保存しました！'}
-          </h2>
-          <p className="mt-1 text-sm text-gray-500">
-            {savedPost?.status === 'posted'
-              ? 'Instagramに投稿されました'
-              : '下書きとして保存されました'}
-          </p>
-          <Button onClick={handleReset} className="mt-6 gap-2">
-            <Sparkles className="h-4 w-4" />
-            新しい投稿を生成する
-          </Button>
-        </Card>
-      </div>
+      <DoneScreen
+        posted={savedPost?.status === 'posted'}
+        platformLabel="Instagram"
+        onReset={handleReset}
+      />
     )
   }
 
+  const hasReference = !!(referencePost.trim() || referenceImage)
+
   return (
-    <div className={cx('p-6 lg:p-8', showPrompt ? 'max-w-5xl lg:flex lg:items-start lg:gap-6' : 'max-w-3xl mx-auto')}>
-      <div className="min-w-0 lg:flex-1">
-        <div className="mb-4 hidden justify-end lg:flex">
-          <button
-            type="button"
-            onClick={() => setShowPrompt(v => !v)}
-            className="inline-flex items-center gap-1.5 rounded-md border border-[#e5edf5] bg-white px-3 py-1.5 text-xs font-medium text-gray-600 transition hover:border-[#00A3BF] hover:text-[#006F83]"
-          >
-            {showPrompt ? '✕ プロンプトを閉じる' : '⚙ プロンプトを編集'}
-          </button>
-        </div>
-      {/* Header */}
-      <div className="mb-6 flex items-start justify-between">
-        <div>
-          <div className="flex items-center gap-2 mb-1">
-            <Link
-              href="/dashboard/generate"
-              className="flex items-center gap-1 text-sm text-gray-400 hover:text-gray-600 transition-colors"
-            >
-              <ChevronLeft className="h-4 w-4" />
-              戻る
-            </Link>
-          </div>
-          <div className="flex items-center gap-2">
-            <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-gradient-to-br from-pink-500 via-fuchsia-500 to-orange-400">
-              <Camera className="h-4 w-4 text-white" />
-            </div>
-            <h1 className="text-xl font-semibold lg:text-2xl" style={{ color: '#061b31' }}>
-              Instagram 投稿生成
-            </h1>
-          </div>
-          <p className="mt-0.5 text-sm text-gray-500 ml-9">画像 + キャプションを生成してInstagramに投稿</p>
-        </div>
-        {step === 'preview' && (
-          <button
-            onClick={() => setStep('input')}
-            className="mt-6 flex items-center gap-1 text-sm text-gray-400 hover:text-gray-600 transition-colors"
-          >
-            <ChevronLeft className="h-4 w-4" />
-            入力に戻る
-          </button>
-        )}
-      </div>
+    <GenerateLayout showPrompt={showPrompt} onTogglePrompt={() => setShowPrompt(v => !v)} accountId={selectedAccount}>
+      <GenerateHeader
+        platform="instagram"
+        title="Instagram 投稿生成"
+        subtitle="画像 + キャプションを生成してInstagramに投稿"
+        showBackToInput={step === 'preview'}
+        onBackToInput={() => setStep('input')}
+      />
 
       {/* Step 1: 入力 */}
       {step === 'input' && (
@@ -343,13 +291,13 @@ export default function InstagramGeneratePage() {
             <div>
               <SectionLabel>Instagramアカウント</SectionLabel>
               {accounts.length === 0 ? (
-                <div className="flex items-start gap-2 rounded-md border border-pink-200 bg-pink-50/40 px-3 py-2">
-                  <AlertCircle className="h-4 w-4 shrink-0 mt-0.5 text-pink-500" />
-                  <div className="text-xs text-pink-700 leading-relaxed">
+                <div className="flex items-start gap-2 rounded-md border border-[#e5edf5] bg-[#F8FAFC] px-3 py-2">
+                  <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-[#00A3BF]" />
+                  <div className="text-xs leading-relaxed text-gray-600">
                     Instagramアカウントが未登録です。
-                    <Link href="/dashboard/accounts" className="ml-1 font-medium underline">アカウント追加</Link>
+                    <Link href="/dashboard/accounts" className="ml-1 font-medium text-[#006F83] underline">アカウント追加</Link>
                     から Instagram タブで連携してください。
-                    <p className="mt-1 text-pink-600/80">※ デモモードで生成のみ可能（投稿は不可）</p>
+                    <p className="mt-1 text-gray-400">※ デモモードで生成のみ可能（投稿は不可）</p>
                   </div>
                 </div>
               ) : (
@@ -357,7 +305,7 @@ export default function InstagramGeneratePage() {
                   value={selectedAccount}
                   onChange={e => setSelectedAccount(e.target.value)}
                   aria-label="投稿先アカウント"
-                  className="w-full appearance-none rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-hidden transition focus:border-pink-500 focus:ring-2 focus:ring-pink-500/20"
+                  className={SELECT_CLASS}
                 >
                   <option value="">デモモード（投稿不可）</option>
                   {accounts.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
@@ -366,261 +314,77 @@ export default function InstagramGeneratePage() {
             </div>
 
             {/* テーマ入力 */}
-            <div>
-              <div className="mb-1.5 flex items-center justify-between">
-                <SectionLabel>投稿テーマ</SectionLabel>
-                <button
-                  onClick={suggestThemes}
-                  disabled={suggestLoading}
-                  className="flex items-center gap-1 text-xs font-medium text-pink-600 hover:text-pink-700 disabled:opacity-50 transition-colors"
-                >
-                  <Lightbulb className={cx('h-3 w-3', suggestLoading && 'animate-pulse')} />
-                  {suggestLoading ? '考え中...' : 'テーマを提案'}
-                </button>
-              </div>
-              {themeSuggestions.length > 0 && (
-                <div className="mb-2 flex flex-wrap gap-1.5">
-                  {themeSuggestions.map(t => (
-                    <button
-                      key={t}
-                      onClick={() => { setTheme(t); setThemeSuggestions([]) }}
-                      className={cx(
-                        'rounded-full border px-3 py-1 text-xs transition-all text-left',
-                        theme === t
-                          ? 'border-pink-500 bg-pink-50 text-pink-700'
-                          : 'border-[#e5edf5] bg-white text-gray-600 hover:border-pink-400 hover:text-pink-600',
-                      )}
-                    >
-                      {t}
-                    </button>
-                  ))}
-                </div>
-              )}
-              <input
-                value={theme}
-                onChange={e => setTheme(e.target.value)}
-                onKeyDown={e => e.key === 'Enter' && !e.nativeEvent.isComposing && handleGenerate()}
-                placeholder="例：高卒でも転職できる3つの理由"
-                aria-label="投稿テーマ"
-                className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-hidden transition placeholder-gray-400 focus:border-pink-500 focus:ring-2 focus:ring-pink-500/20"
-              />
-            </div>
+            <ThemeField
+              theme={theme}
+              setTheme={setTheme}
+              onGenerate={() => handleGenerate()}
+              suggestThemes={suggestThemes}
+              suggestLoading={suggestLoading}
+              suggestions={themeSuggestions}
+              onPickSuggestion={t => { setTheme(t); setThemeSuggestions([]) }}
+              placeholder="例：高卒でも転職できる3つの理由"
+            />
           </Card>
 
-          {/* 投稿の型 */}
-          <div>
-            <div className="mb-2 flex items-center justify-between">
-              <SectionLabel>投稿の型</SectionLabel>
-              <span className="text-xs text-gray-400">任意</span>
-            </div>
-            <div className="grid grid-cols-3 gap-2 sm:grid-cols-5">
-              {POST_TYPES.map(t => (
-                <button
-                  key={t.value}
-                  type="button"
-                  onClick={() => setPostType(postType === t.value ? '' : t.value)}
-                  className={cx(
-                    'flex flex-col items-center gap-1 rounded-lg border py-3 px-2 text-center transition-all',
-                    postType === t.value
-                      ? 'border-pink-500 bg-pink-50'
-                      : 'border-[#e5edf5] bg-white hover:border-[#c8d8e8] hover:bg-[#F8FAFC]',
-                  )}
-                >
-                  <span className="text-xl leading-none">{t.emoji}</span>
-                  <span className={cx('text-xs font-medium leading-tight', postType === t.value ? 'text-pink-700' : 'text-gray-700')}>
-                    {t.label}
-                  </span>
-                  <span className="text-[10px] text-gray-400 leading-tight">{t.desc}</span>
-                </button>
-              ))}
-            </div>
-          </div>
+          <PostTypeGrid options={POST_TYPES} value={postType} onChange={v => setPostType(v as PostType | '')} />
 
-          {/* 参考投稿 */}
-          <div className="rounded-lg border border-[#e5edf5] bg-white">
-            <button
-              type="button"
-              onClick={() => setShowReference(v => !v)}
-              className="flex w-full items-center justify-between px-4 py-3 text-left"
-            >
-              <div className="flex items-center gap-2">
-                <BookOpen className="h-4 w-4 text-pink-500" />
-                <span className="text-sm font-medium text-gray-700">参考投稿を使う</span>
-                {(referencePost.trim() || referenceImage) && (
-                  <span className="rounded-full bg-pink-50 px-2 py-0.5 text-[10px] font-medium text-pink-700">設定済み</span>
-                )}
-              </div>
-              {showReference ? <ChevronUp className="h-4 w-4 text-gray-400" /> : <ChevronDown className="h-4 w-4 text-gray-400" />}
-            </button>
+          <ReferencePanel
+            open={showReference}
+            onToggle={() => setShowReference(v => !v)}
+            referenceAccounts={referenceAccounts}
+            selectedRefAccount={selectedRefAccount}
+            setSelectedRefAccount={setSelectedRefAccount}
+            referencePost={referencePost}
+            setReferencePost={setReferencePost}
+            referenceImage={referenceImage}
+            setReferenceImage={setReferenceImage}
+            onUploadImage={handleReferenceImageUpload}
+          />
 
-            {showReference && (
-              <div className="border-t border-[#e5edf5] px-4 pb-4 pt-3 space-y-3">
-                <p className="text-xs text-gray-400 leading-relaxed">
-                  参考にしたい投稿をペーストしてください。AIがテーマ・構成を読み取り、自分のスタイルで書き直します。
-                </p>
-
-                {referenceAccounts.length > 0 && (
-                  <div>
-                    <p className="mb-1 text-xs font-medium text-gray-500">参考アカウント（任意）</p>
-                    <select
-                      value={selectedRefAccount}
-                      onChange={e => setSelectedRefAccount(e.target.value)}
-                      className="w-full appearance-none rounded-md border border-gray-200 bg-white px-3 py-2 text-sm text-gray-900 outline-hidden transition focus:border-pink-500 focus:ring-2 focus:ring-pink-500/20"
-                    >
-                      <option value="">選択しない</option>
-                      {referenceAccounts.map(r => (
-                        <option key={r.id} value={r.id}>{r.name}{r.handle ? ` (@${r.handle})` : ''}</option>
-                      ))}
-                    </select>
-                  </div>
-                )}
-
-                <div>
-                  <div className="mb-1 flex items-center justify-between">
-                    <p className="text-xs font-medium text-gray-500">参考投稿テキスト</p>
-                    {referencePost && (
-                      <button onClick={() => setReferencePost('')} className="flex items-center gap-0.5 text-xs text-gray-400 hover:text-red-500 transition-colors">
-                        <X className="h-3 w-3" />クリア
-                      </button>
-                    )}
-                  </div>
-                  <Textarea
-                    value={referencePost}
-                    onChange={e => setReferencePost(e.target.value)}
-                    rows={5}
-                    placeholder="参考にしたい投稿をここにペーストしてください..."
-                    className="resize-none text-sm"
-                  />
-                  {referencePost.trim() && (
-                    <p className="mt-1 text-[11px] text-pink-600">✓ この投稿を参考にして生成します（元の文章はそのまま使いません）</p>
-                  )}
-                </div>
-
-                <div>
-                  <div className="mb-1 flex items-center justify-between">
-                    <p className="text-xs font-medium text-gray-500">参考画像（任意）</p>
-                    {referenceImage && (
-                      <button onClick={() => setReferenceImage(null)} className="flex items-center gap-0.5 text-xs text-gray-400 hover:text-red-500 transition-colors">
-                        <X className="h-3 w-3" />クリア
-                      </button>
-                    )}
-                  </div>
-                  {referenceImage ? (
-                    <div className="rounded-md border border-[#e5edf5] bg-white p-2">
-                      {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img src={`data:${referenceImage.mimeType};base64,${referenceImage.base64}`} alt="参考画像" className="max-h-40 w-auto rounded object-contain" />
-                      <p className="mt-1 text-[11px] text-pink-600">✓ レイアウト・配色・スタイルを参考にして画像を生成します</p>
-                    </div>
-                  ) : (
-                    <label className="flex cursor-pointer items-center gap-2 rounded-md border-2 border-dashed border-[#e5edf5] bg-white px-3 py-3 text-sm text-gray-500 transition hover:border-pink-400 hover:bg-pink-50/30">
-                      <Upload className="h-4 w-4" />
-                      <span>画像をアップロード（最大5MB）</span>
-                      <input type="file" accept="image/*" onChange={e => { const f = e.target.files?.[0]; if (f) handleReferenceImageUpload(f); e.target.value = '' }} className="hidden" />
-                    </label>
-                  )}
-                </div>
-              </div>
-            )}
-          </div>
-
-          <div>
-            <Button onClick={() => handleGenerate()} disabled={!theme.trim()} isLoading={loading} loadingText="生成中..." className="w-full gap-2 py-2.5 bg-gradient-to-r from-pink-500 via-fuchsia-500 to-orange-400 hover:from-pink-600 hover:via-fuchsia-600 hover:to-orange-500">
-              <Sparkles className="h-4 w-4" />
-              AI生成する
-            </Button>
-            {!theme.trim() && !loading && (
-              <p className="mt-1.5 text-center text-xs text-gray-400">
-                💡 投稿テーマを入力すると生成できます
-              </p>
-            )}
-          </div>
+          <GenerateButton onGenerate={() => handleGenerate()} disabled={!theme.trim()} loading={loading} />
         </div>
       )}
 
       {/* Step 2: プレビュー */}
       {step === 'preview' && (
         <div className="space-y-4">
-          {isDemoMode && (
-            <div className="flex items-center justify-between rounded-md border border-pink-200 bg-pink-50/40 px-4 py-2.5">
-              <div className="flex items-center gap-2">
-                <span className="rounded-full bg-pink-100 px-2 py-0.5 text-xs font-medium text-pink-700">デモモード</span>
-                <span className="text-xs text-gray-500">下書き保存のみ可能です</span>
-              </div>
-              <span className="text-xs text-gray-400">アカウントを追加すると投稿できます</span>
-            </div>
-          )}
+          {isDemoMode && <DemoModeNotice />}
 
-          <div className="flex items-center gap-2 text-sm text-gray-500">
-            <span className="text-xs font-semibold uppercase tracking-wider text-gray-400">テーマ</span>
-            <span className="text-gray-700">{theme}</span>
-            {(referencePost.trim() || referenceImage) && (
+          <ThemePreviewRow
+            theme={theme}
+            onEdit={() => setStep('input')}
+            badges={hasReference && (
               <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-medium text-amber-600">
                 参考{referencePost.trim() && referenceImage ? '投稿+画像' : referenceImage ? '画像' : '投稿'}あり
               </span>
             )}
-            <button onClick={() => setStep('input')} className="ml-auto text-xs text-pink-600 hover:underline">変更</button>
-          </div>
+          />
 
           {/* 画像（Instagram は画像必須） */}
-          <Card className="space-y-3">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <SectionLabel>投稿画像（必須）</SectionLabel>
-                {referenceImage && (
-                  <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-medium text-amber-600">参考画像でテイスト適用</span>
-                )}
-              </div>
-              <button onClick={handleGenerateImage} disabled={imageLoading} className="flex items-center gap-1 text-xs font-medium text-pink-600 hover:text-pink-700 disabled:opacity-50">
-                <ImageIcon className="h-3 w-3" />
-                {imageLoading ? '生成中...' : imageUrl ? '再生成' : '画像を生成'}
-              </button>
-            </div>
-            {imageUrl ? (
-              <>
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={imageUrl} alt="生成された画像" className="w-full rounded-md" />
-                <div className="mt-2 flex flex-col gap-2 sm:flex-row">
-                  <input
-                    value={imageEditPrompt}
-                    onChange={e => setImageEditPrompt(e.target.value)}
-                    onKeyDown={e => e.key === 'Enter' && !e.nativeEvent.isComposing && handleEditImage()}
-                    placeholder="修正指示（例：背景を青に、テキストを日本語に）"
-                    disabled={imageEditing}
-                    className="min-w-0 flex-1 rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-hidden placeholder-gray-400 transition focus:border-pink-500 focus:ring-2 focus:ring-pink-500/20 disabled:opacity-50"
-                  />
-                  <button
-                    onClick={handleEditImage}
-                    disabled={!imageEditPrompt.trim() || imageEditing}
-                    className="flex w-full items-center justify-center gap-1.5 rounded-md bg-gradient-to-r from-pink-500 to-fuchsia-500 px-3 py-2 text-xs font-medium text-white transition hover:opacity-90 disabled:opacity-40 sm:w-auto sm:shrink-0"
-                  >
-                    <Wand2 className={cx('h-3.5 w-3.5', imageEditing && 'animate-pulse')} />
-                    {imageEditing ? '修正中...' : '修正'}
-                  </button>
-                </div>
-                {imagePrompt && (
-                  <details className="mt-2 rounded-md border border-pink-200 bg-pink-50/40 px-3 py-2">
-                    <summary className="cursor-pointer text-[11px] font-medium text-pink-700 hover:text-pink-900">
-                      🔍 画像生成プロンプトを表示
-                    </summary>
-                    <pre className="mt-2 max-h-60 overflow-auto whitespace-pre-wrap break-words text-[11px] leading-relaxed text-gray-700">
-                      {imagePrompt}
-                    </pre>
-                  </details>
-                )}
-              </>
-            ) : (
-              <div className="flex h-40 flex-col items-center justify-center gap-2 rounded-md border-2 border-dashed border-pink-200 bg-pink-50/20">
-                <ImageIcon className="h-6 w-6 text-pink-300" />
-                <span className="text-xs text-pink-600/70">「画像を生成」ボタンで作成（必須）</span>
-              </div>
+          <ImagePanel
+            label="投稿画像（必須）"
+            generateLabel="画像を生成"
+            imageUrl={imageUrl}
+            imageLoading={imageLoading}
+            imageEditPrompt={imageEditPrompt}
+            setImageEditPrompt={setImageEditPrompt}
+            imageEditing={imageEditing}
+            onGenerate={handleGenerateImage}
+            onEdit={handleEditImage}
+            imagePrompt={imagePrompt}
+            badge={referenceImage && (
+              <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-medium text-amber-600">参考画像でテイスト適用</span>
             )}
-          </Card>
+            emptyText="「画像を生成」ボタンで作成（必須）"
+            emptyTall
+            imageAlt="生成された画像"
+          />
 
           {/* キャプション */}
           <Card className="space-y-3">
             <div className="flex items-center justify-between">
               <SectionLabel>キャプション</SectionLabel>
-              <button onClick={() => handleGenerate()} disabled={loading} className="flex items-center gap-1 text-xs font-medium text-pink-600 hover:text-pink-700 disabled:opacity-50">
+              <button onClick={() => handleGenerate()} disabled={loading} className="flex items-center gap-1 text-xs font-medium text-[#006F83] transition-colors hover:text-[#005A6B] disabled:opacity-50">
                 <RefreshCw className={cx('h-3 w-3', loading && 'animate-spin')} />
                 再生成
               </button>
@@ -631,14 +395,8 @@ export default function InstagramGeneratePage() {
               rows={9}
               className="resize-none border-none bg-transparent p-0 shadow-none focus:ring-0"
             />
-            <div className="flex items-center justify-between border-t border-gray-100 pt-2">
-              <span className={cx('text-xs', captionOver ? 'text-red-500 font-medium' : 'text-gray-400')}>
-                {generatedText.length} / {IG_CAPTION_MAX} 文字
-              </span>
-              <div className={cx(
-                'h-1.5 w-1.5 rounded-full',
-                captionOver ? 'bg-red-400' : generatedText.length > 1800 ? 'bg-yellow-400' : 'bg-green-500',
-              )} />
+            <div className="flex items-center justify-end border-t border-gray-100 pt-2">
+              <CharCounter text={generatedText} limit={IG_CAPTION_MAX} />
             </div>
           </Card>
 
@@ -654,7 +412,7 @@ export default function InstagramGeneratePage() {
                 disabled={loading || !imageUrl || captionOver}
                 isLoading={loading}
                 loadingText="投稿中..."
-                className="flex-1 gap-2 bg-gradient-to-r from-pink-500 via-fuchsia-500 to-orange-400 hover:opacity-90"
+                className="flex-1 gap-2"
               >
                 <Send className="h-4 w-4" />
                 今すぐ投稿
@@ -663,32 +421,6 @@ export default function InstagramGeneratePage() {
           </div>
         </div>
       )}
-
-        {/* モバイル/中画面: フォーム下に折りたたみ */}
-        <details className="mt-6 rounded-lg border border-[#e5edf5] bg-white p-4 lg:hidden">
-          <summary className="cursor-pointer select-none text-sm font-semibold text-pink-600">
-            このアカウントで使われるプロンプトを表示
-          </summary>
-          <div className="mt-3">
-            <AccountPromptPanel accountId={selectedAccount} />
-          </div>
-        </details>
-      </div>
-
-      {/* lg以上: トグルで表示するプロンプト編集パネル */}
-      {showPrompt && (
-      <aside className="mt-6 hidden w-full lg:mt-0 lg:block lg:w-80 lg:shrink-0 lg:sticky lg:top-6">
-        <div
-          className="relative w-full rounded-lg bg-white p-5 text-left"
-          style={{
-            border: '1px solid #e5edf5',
-            boxShadow: 'rgba(50,50,93,0.08) 0px 8px 20px -8px, rgba(0,0,0,0.05) 0px 5px 10px -5px',
-          }}
-        >
-          <AccountPromptPanel accountId={selectedAccount} />
-        </div>
-      </aside>
-      )}
-    </div>
+    </GenerateLayout>
   )
 }
