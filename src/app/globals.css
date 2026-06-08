@@ -70,3 +70,18 @@ textarea:focus-visible,
   outline: 2px solid #00A3BF;
   outline-offset: 2px;
 }
+
+/*
+ * prefers-reduced-motion 配慮（web/performance.md 準拠）。
+ * モーション低減を希望するユーザーには、装飾的アニメーション（スライド/フェード）を抑止し、
+ * ローディングスピナー(animate-spin)は「処理中」が伝わるよう停止せず低速化する。
+ */
+@media (prefers-reduced-motion: reduce) {
+  .animate-spin {
+    animation-duration: 1.6s;
+  }
+  .animate-hide,
+  [class*="slide"][class*="fade"] {
+    animation: none;
+  }
+}

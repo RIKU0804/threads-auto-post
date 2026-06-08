@@ -5,8 +5,8 @@
 // 各テーマは既存APIを順番に叩いて実現（サーバ集約せずクライアント orchestration）:
 //   1) POST /api/generate/text  → 下書き自動作成(draftId, content)
 //   2) (任意) POST /api/generate/image → imageUrl
-//   3) PATCH /api/posts/[draftId] { imageUrl } で画像を添付
-// 画像生成はレート制限(約5件/分)があるため逐次実行＋進捗表示。
+//   3) PATCH /api/posts/[draftId] { imageUrl } で画像を添付（成功可否を検証）
+// 画像生成はレート制限(約5件/分)があるため逐次実行＋進捗表示。実行中は「中断」可能。
 
 import { useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
@@ -25,12 +25,13 @@ type ItemStatus = 'pending' | 'text' | 'image' | 'done' | 'failed'
 interface BatchItem {
   theme: string
   status: ItemStatus
-  withImage: boolean
   imageFailed?: boolean
   error?: string
 }
 
 const MAX_ITEMS = 5
+
+const isAbortError = (e: unknown): boolean => e instanceof DOMException && e.name === 'AbortError'
 
 interface AccountOption { id: string; name: string; platform: string }
 
@@ -45,9 +46,10 @@ export default function BatchGeneratePage() {
   const [items, setItems] = useState<BatchItem[]>([])
   // AI提案テーマ
   const { themeSuggestions, setThemeSuggestions, suggestLoading, suggestThemes } = useThemeSuggestions(selectedAccount)
-  // 実行中バッチの中断用（アンマウント時に無駄なAPI課金を止める）
+  // 実行中バッチの中断用。unmountedRef はアンマウント由来の中断とユーザー中断を区別する。
   const abortRef = useRef<AbortController | null>(null)
-  useEffect(() => () => abortRef.current?.abort(), [])
+  const unmountedRef = useRef(false)
+  useEffect(() => () => { unmountedRef.current = true; abortRef.current?.abort() }, [])
 
   useEffect(() => {
     const ctrl = new AbortController()
@@ -114,6 +116,65 @@ export default function BatchGeneratePage() {
     setItems(prev => prev.map((it, j) => (j === index ? { ...it, ...patch } : it)))
   }
 
+  // 画像生成→下書きへ添付。成功可否を返す（ベストエフォート。中断は例外として伝播）。
+  async function attachImage(draftId: string, content: string, signal: AbortSignal): Promise<boolean> {
+    const imRes = await fetch('/api/generate/image', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ accountId: selectedAccount, postContent: content, style: 'diagram' }),
+      signal,
+    })
+    const imData = await imRes.json().catch(() => ({})) as { imageUrl?: string; error?: string }
+    if (!imRes.ok || !imData.imageUrl) return false
+    const patchRes = await fetch(`/api/posts/${draftId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ imageUrl: imData.imageUrl }),
+      signal,
+    })
+    return patchRes.ok   // 添付PATCHの成否まで検証する
+  }
+
+  // 1テーマ分の処理: 文章生成→(任意)画像添付→ステータス更新。'done'|'failed'|'aborted' を返す。
+  async function processTheme(i: number, theme: string, signal: AbortSignal): Promise<'done' | 'failed' | 'aborted'> {
+    patchItem(i, { status: 'text' })
+    try {
+      // 1) 文章生成（下書きが自動作成され draftId が返る）
+      const tRes = await fetch('/api/generate/text', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ accountId: selectedAccount, theme }),
+        signal,
+      })
+      const tData = await tRes.json().catch(() => ({})) as { content?: string; draftId?: string | null; error?: string }
+      if (!tRes.ok || tData.error || !tData.content) throw new Error(tData.error ?? '文章生成に失敗しました')
+
+      // 2) 画像生成 + 3) 添付（任意・失敗しても下書き本文は残す。失敗は imageFailed で可視化）
+      if (effectiveWithImage) {
+        patchItem(i, { status: 'image' })
+        const draftId = tData.draftId ?? null
+        let attached = false
+        try {
+          attached = draftId ? await attachImage(draftId, tData.content, signal) : false
+        } catch (e) {
+          if (signal.aborted || isAbortError(e)) throw e   // 中断は外側に伝播
+          attached = false                                  // 画像はベストエフォート
+        }
+        if (!attached) patchItem(i, { imageFailed: true })
+      }
+
+      patchItem(i, { status: 'done' })
+      return 'done'
+    } catch (e) {
+      if (signal.aborted || isAbortError(e)) {
+        patchItem(i, { status: 'failed', error: '中断しました' })
+        return 'aborted'
+      }
+      patchItem(i, { status: 'failed', error: e instanceof Error ? e.message.slice(0, 120) : '失敗しました' })
+      return 'failed'
+    }
+  }
+
   async function runBatch() {
     if (!selectedAccount) { toast.error('アカウントを選択してください'); return }
     const themes = previewThemes
@@ -126,67 +187,26 @@ export default function BatchGeneratePage() {
     const { signal } = ctrl
 
     setRunning(true)
-    setItems(themes.map(t => ({ theme: t, status: 'pending', withImage: effectiveWithImage })))
-
-    const isAbort = (e: unknown) => signal.aborted || (e instanceof DOMException && e.name === 'AbortError')
+    setItems(themes.map(t => ({ theme: t, status: 'pending' })))
 
     let done = 0
     for (let i = 0; i < themes.length; i++) {
       if (signal.aborted) break
-      patchItem(i, { status: 'text' })
-      try {
-        // 1) 文章生成（下書きが自動作成され draftId が返る）
-        const tRes = await fetch('/api/generate/text', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ accountId: selectedAccount, theme: themes[i] }),
-          signal,
-        })
-        const tData = await tRes.json().catch(() => ({})) as { content?: string; draftId?: string | null; error?: string }
-        if (!tRes.ok || tData.error || !tData.content) {
-          throw new Error(tData.error ?? '文章生成に失敗しました')
-        }
-        const draftId = tData.draftId ?? null
-
-        // 2) 画像生成 + 3) 添付（任意・失敗しても下書き本文は残す）
-        if (effectiveWithImage && draftId) {
-          patchItem(i, { status: 'image' })
-          try {
-            const imRes = await fetch('/api/generate/image', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ accountId: selectedAccount, postContent: tData.content, style: 'diagram' }),
-              signal,
-            })
-            const imData = await imRes.json().catch(() => ({})) as { imageUrl?: string; error?: string }
-            if (imRes.ok && imData.imageUrl) {
-              await fetch(`/api/posts/${draftId}`, {
-                method: 'PATCH',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ imageUrl: imData.imageUrl }),
-                signal,
-              })
-            } else {
-              patchItem(i, { imageFailed: true })
-            }
-          } catch (e) {
-            if (isAbort(e)) throw e        // 中断は外側に伝播してループを止める
-            patchItem(i, { imageFailed: true })
-          }
-        }
-
-        patchItem(i, { status: 'done' })
-        done += 1
-      } catch (e) {
-        if (isAbort(e)) break
-        patchItem(i, { status: 'failed', error: e instanceof Error ? e.message.slice(0, 120) : '失敗しました' })
-      }
+      const result = await processTheme(i, themes[i], signal)
+      if (result === 'aborted') break
+      if (result === 'done') done += 1
     }
 
-    if (signal.aborted) return            // アンマウント等で中断された場合は後処理しない
+    if (unmountedRef.current) return            // アンマウント時は状態を触らない
     setRunning(false)
-    if (done > 0) toast.success(`${done}件を下書きに保存しました`)
-    else toast.error('生成に失敗しました')
+    if (signal.aborted) {
+      // ユーザーによる中断。完了件数を通知（通常完了は下部バナーに一本化）
+      toast.show({ kind: 'info', message: done > 0 ? `${done}件を保存して中断しました` : '生成を中断しました' })
+    }
+  }
+
+  function cancelBatch() {
+    abortRef.current?.abort()
   }
 
   const allDone = items.length > 0 && !running && items.every(it => it.status === 'done' || it.status === 'failed')
@@ -204,10 +224,10 @@ export default function BatchGeneratePage() {
         <div>
           <label htmlFor="batch-account" className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-gray-500">投稿先アカウント</label>
           {accounts.length === 0 ? (
-            <p className="text-xs text-amber-600">
+            <p className="text-xs text-amber-700">
               先にアカウントを連携してください（
               <Link href="/dashboard/accounts" className="font-medium text-[#006F83] underline">アカウント連携</Link>
-              ）
+              ）。まとめて生成はアカウント連携が必要です（単発の生成はデモモードで試せます）。
             </p>
           ) : (
             <SelectNative id="batch-account" value={selectedAccount} onChange={e => setSelectedAccount(e.target.value)} disabled={running}>
@@ -250,7 +270,7 @@ export default function BatchGeneratePage() {
                 <Sparkles className="h-3 w-3" aria-hidden /> AIの提案（クリックで追加）
               </p>
               {atMax && (
-                <p className="mb-2 text-[11px] text-amber-600">
+                <p className="mb-2 text-[11px] text-amber-700">
                   最大{MAX_ITEMS}件に達しました。追加するには選択中のテーマを外してください。
                 </p>
               )}
@@ -286,7 +306,7 @@ export default function BatchGeneratePage() {
           <div className="space-y-1">
             <p className="text-[11px] text-gray-500">生成されるテーマ: {previewThemes.length} / 最大{MAX_ITEMS}件</p>
             {overLimit && (
-              <p className="text-[11px] text-amber-600">
+              <p className="text-[11px] text-amber-700">
                 {rawThemes.length}件入力されています。先頭{MAX_ITEMS}件のみ生成され、{MAX_ITEMS + 1}件目以降は対象外です。
               </p>
             )}
@@ -318,11 +338,24 @@ export default function BatchGeneratePage() {
             <Sparkles className="h-4 w-4" aria-hidden />
             {previewThemes.length > 0 ? `${previewThemes.length}件をまとめて生成` : 'まとめて生成'}
           </Button>
-          {effectiveWithImage && (
+
+          {running && (
+            <button
+              type="button"
+              onClick={cancelBatch}
+              className="mt-2 w-full rounded-md border border-gray-300 py-2 text-sm font-medium text-gray-600 transition-colors hover:bg-gray-50"
+            >
+              中断する
+            </button>
+          )}
+
+          {previewThemes.length === 0 && !!selectedAccount && !running ? (
+            <p className="mt-2 text-center text-[11px] text-gray-500">テーマを1つ以上入力すると生成できます。</p>
+          ) : effectiveWithImage ? (
             <p className="mt-2 text-center text-[11px] text-gray-500">
               画像生成はレート制限のため1件ずつ順番に作ります（数分かかる場合があります）。
             </p>
-          )}
+          ) : null}
         </div>
       </Card>
 
@@ -340,7 +373,7 @@ export default function BatchGeneratePage() {
               <span className="min-w-0 flex-1 truncate text-sm text-gray-700">{it.theme}</span>
               <span className="shrink-0 text-[11px] text-gray-500">
                 {it.status === 'text' ? '文章を生成中…'
-                  : it.status === 'image' ? <span className="inline-flex items-center gap-1"><ImageIcon className="h-3 w-3" />画像を生成中…</span>
+                  : it.status === 'image' ? <span className="inline-flex items-center gap-1"><ImageIcon className="h-3 w-3" aria-hidden />画像を生成中…</span>
                   : it.status === 'done' ? (it.imageFailed ? '完了（画像なし）' : '完了')
                   : it.status === 'failed' ? (it.error ?? '失敗') : '待機中'}
               </span>
@@ -350,15 +383,21 @@ export default function BatchGeneratePage() {
       )}
 
       {allDone && (
-        <div className="mt-4 flex items-center justify-between rounded-lg border border-green-200 bg-green-50 px-4 py-3" role="status">
-          <span className="text-sm font-medium text-green-700">{doneCount}件を下書きに保存しました</span>
-          <button
-            onClick={() => router.push('/dashboard/drafts')}
-            className="inline-flex items-center gap-1 text-sm font-medium text-[#006F83] hover:underline"
-          >
-            投稿一覧で確認・投稿する <ArrowRight className="h-3.5 w-3.5" />
-          </button>
-        </div>
+        doneCount > 0 ? (
+          <div className="mt-4 flex items-center justify-between rounded-lg border border-green-200 bg-green-50 px-4 py-3">
+            <span className="text-sm font-medium text-green-700" role="status">{doneCount}件を下書きに保存しました</span>
+            <button
+              onClick={() => router.push('/dashboard/drafts')}
+              className="inline-flex items-center gap-1 text-sm font-medium text-[#006F83] hover:underline"
+            >
+              投稿一覧で確認・投稿する <ArrowRight className="h-3.5 w-3.5" aria-hidden />
+            </button>
+          </div>
+        ) : (
+          <div className="mt-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3" role="status">
+            <p className="text-sm font-medium text-red-700">生成に失敗しました。少し時間をおいて、もう一度お試しください。</p>
+          </div>
+        )
       )}
     </div>
   )
