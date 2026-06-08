@@ -95,6 +95,14 @@ export async function GET(req: NextRequest) {
     return redirectFailure('token_exchange_failed')
   }
 
+  // 書き込みスコープ検証: アプリの App permissions が「Read」のままだと、tweet.write を要求しても
+  // 付与スコープから外れ、投稿時に 403「not permitted」になる。連携時点で検知して即案内する。
+  // （X が scope を返さない場合は誤ブロックを避けてフェイルオープン）
+  if (tokens.scope && !tokens.scope.split(/\s+/).includes('tweet.write')) {
+    console.error('[x/callback] granted scope lacks tweet.write:', tokens.scope)
+    return redirectFailure('x_no_write_scope')
+  }
+
   // X ユーザー情報（id / username / name）
   let me
   try {

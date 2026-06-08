@@ -737,6 +737,7 @@ export default function AccountsPage() {
         provider_error: '連携が許可されませんでした',
         db_error: '保存に失敗しました。もう一度お試しください',
         unauthorized: 'ログインが必要です',
+        x_no_write_scope: 'Xアプリに「書き込み(Write)」権限がありません。X Developer Portal の「User authentication settings」で App permissions を「Read and write」にして保存してから、もう一度連携してください',
       }
       toast.error(map[error] ?? `連携に失敗しました（${error}）`)
     }

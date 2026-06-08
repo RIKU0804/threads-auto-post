@@ -52,16 +52,29 @@ function parseXErrorDetail(raw: string): string {
 }
 
 // HTTP ステータスごとに、原因が分かる安全なエラーを投げる。
-function throwXHttpError(method: string, path: string, status: number, raw: string): never {
+// authMode により 403 の復旧手順を出し分ける（OAuth2=再連携 / OAuth1=トークン再生成）。
+function throwXHttpError(
+  method: string,
+  path: string,
+  status: number,
+  raw: string,
+  authMode: XAuth['mode'] = 'oauth1',
+): never {
   console.error('[X API]', method, path, status, raw.slice(0, 300))
   const detail = parseXErrorDetail(raw)
   if (status === 401) {
     throw new XAuthError()
   }
   if (status === 403) {
+    // 403「You are not permitted to perform this action」= 実効トークンに書き込み権限が無い。
+    // 原因は X アプリの App permissions が「Read」のまま、または権限付与前のトークン。
+    const recovery =
+      authMode === 'oauth2'
+        ? 'X Developer Portal →「User authentication settings」で App permissions を「Read and write」にして保存したうえで、アプリの「Xと連携」からもう一度【再連携】してください（権限変更前に連携したトークンは書き込み不可のままです）。'
+        : 'X Developer Portal でアプリ権限を「Read and write」にして保存したうえで、「Keys and tokens」で Access Token / Secret を【再生成】し、登録し直してください（権限変更前のトークンは読み取り専用のままです）。'
     throw new PublishError(
       'X_FORBIDDEN_403',
-      `X投稿が拒否されました (HTTP 403)。アプリに「Write（書き込み）」権限が無い、またはトークンが権限変更前のものの可能性が高いです。Developer Portal でアプリ権限を「Read and Write」にしてから Access Token を再生成してください。${detail ? ` / X詳細: ${detail}` : ''}`,
+      `X投稿が拒否されました (HTTP 403)。アプリに「書き込み(Write)」権限が無い可能性が高いです。${recovery}${detail ? ` / X詳細: ${detail}` : ''}`,
     )
   }
   if (status === 429) {
@@ -147,7 +160,7 @@ async function xPost<T>(path: string, auth: XAuth, body: unknown): Promise<T> {
   })
   if (!res.ok) {
     const errText = await res.text().catch(() => '')
-    throwXHttpError('POST', path, res.status, errText)
+    throwXHttpError('POST', path, res.status, errText, auth.mode)
   }
   return res.json() as Promise<T>
 }
@@ -164,7 +177,7 @@ async function xGet<T>(
   })
   if (!res.ok) {
     const errText = await res.text().catch(() => '')
-    throwXHttpError('GET', path, res.status, errText)
+    throwXHttpError('GET', path, res.status, errText, auth.mode)
   }
   // x-access-level: トークンの実効権限を表す。read / read-write / read-write-directmessages。
   // 認証付き読み取りリクエストでも返るため、投稿を試す前に「読み取り専用」を検知できる。
@@ -198,7 +211,7 @@ export async function uploadXMedia(
 
   const raw = await res.text().catch(() => '')
   if (!res.ok) {
-    throwXHttpError('POST', '/2/media/upload', res.status, raw)
+    throwXHttpError('POST', '/2/media/upload', res.status, raw, auth.mode)
   }
 
   // HTTP 200 でも data 不在 / errors を返す場合があるため明示的に検査
