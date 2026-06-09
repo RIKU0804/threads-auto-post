@@ -1,13 +1,12 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { RefreshCw, Save, Send, Scissors, Plus, X } from 'lucide-react'
+import { RefreshCw, Scissors, Plus, X } from 'lucide-react'
 import { Card } from '@/components/ui/Card'
-import { Button } from '@/components/ui/Button'
 import { Textarea } from '@/components/ui/Textarea'
 import {
   GenerateLayout, GenerateHeader, DoneScreen, DemoModeNotice,
-  ThemeField, PostTypeGrid, ThemePreviewRow, GenerateButton,
+  ThemeField, PostTypeGrid, ThemePreviewRow, GenerateButton, GenerateActions,
   SectionLabel, CharCounter, SELECT_CLASS, type PostTypeOption,
 } from '@/components/generate/GenerateParts'
 import { ReferencePanel, type ReferenceImage } from '@/components/generate/ReferencePanel'
@@ -49,6 +48,7 @@ export default function XGeneratePage() {
   const [generatedSummary, setGeneratedSummary] = useState('')
   const [savedPost, setSavedPost] = useState<Post | null>(null)
   const [draftId, setDraftId] = useState<string | null>(null)
+  const [scheduledAt, setScheduledAt] = useState<string | null>(null)
 
   const [imageUrl, setImageUrl] = useState('')
   const [imagePrompt, setImagePrompt] = useState('')
@@ -229,6 +229,41 @@ export default function XGeneratePage() {
     reader.readAsDataURL(file)
   }
 
+  // 生成時に下書きは自動保存済み。draftId があれば最新を反映、無ければ新規作成して Post を返す。
+  async function persistDraft(): Promise<Post> {
+    const textContent = postMode === 'thread'
+      ? threadParts.join('\n---\n')
+      : generatedText
+    if (draftId) {
+      const res = await fetch(`/api/posts/${draftId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          textContent,
+          imageUrl: imageUrl || null,
+          summary: generatedSummary || null,
+        }),
+      })
+      const post = await res.json() as Post & { error?: string }
+      if (post.error) throw new Error(post.error)
+      return post
+    }
+    const res = await fetch('/api/posts', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        accountId: selectedAccount || undefined,
+        textContent,
+        imageUrl: imageUrl || undefined,
+        theme,
+        summary: generatedSummary || undefined,
+      }),
+    })
+    const post = await res.json() as Post & { error?: string }
+    if (post.error) throw new Error(post.error)
+    return post
+  }
+
   async function handleSave(publish = false) {
     // 280字超過のまま投稿しようとした場合は、X側で弾かれる前に止める
     if (publish && xOver) {
@@ -237,38 +272,7 @@ export default function XGeneratePage() {
     }
     setLoading(true)
     try {
-      const textContent = postMode === 'thread'
-        ? threadParts.join('\n---\n')
-        : generatedText
-
-      // 生成時に下書きは自動保存済み。draftId があれば最新を反映するだけ（二重作成しない）
-      let post: Post & { error?: string }
-      if (draftId) {
-        const res = await fetch(`/api/posts/${draftId}`, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            textContent,
-            imageUrl: imageUrl || null,
-            summary: generatedSummary || null,
-          }),
-        })
-        post = await res.json() as Post & { error?: string }
-      } else {
-        const res = await fetch('/api/posts', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            accountId: selectedAccount || undefined,
-            textContent,
-            imageUrl: imageUrl || undefined,
-            theme,
-            summary: generatedSummary || undefined,
-          }),
-        })
-        post = await res.json() as Post & { error?: string }
-      }
-      if (post.error) throw new Error(post.error)
+      const post = await persistDraft()
       if (publish && selectedAccount) {
         const pubRes = await fetch(`/api/posts/${post.id}/publish`, { method: 'POST' })
         if (!pubRes.ok) {
@@ -288,6 +292,36 @@ export default function XGeneratePage() {
     }
   }
 
+  // 予約投稿: 下書きを保存 → /schedule で予約。実際の送信は pg_cron が期限到来時に行う。
+  async function handleSchedule(iso: string) {
+    if (!selectedAccount) { toast.error('予約にはアカウントの選択が必要です'); return }
+    if (xOver) {
+      toast.error(postMode === 'thread' ? '280字を超えているツイートがあります' : '280字を超えています')
+      return
+    }
+    setLoading(true)
+    try {
+      const post = await persistDraft()
+      const res = await fetch(`/api/posts/${post.id}/schedule`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ scheduledAt: iso, accountId: selectedAccount }),
+      })
+      const data = await res.json().catch(() => ({})) as { error?: string }
+      if (!res.ok) {
+        setSavedPost(post)
+        throw new Error(data.error ?? '予約に失敗しました（下書きは保存済み）')
+      }
+      setScheduledAt(iso)
+      setSavedPost({ ...post, status: 'scheduled' })
+      setStep('done')
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : '予約に失敗しました')
+    } finally {
+      setLoading(false)
+    }
+  }
+
   function handleReset() {
     setStep('input')
     setTheme('')
@@ -300,6 +334,7 @@ export default function XGeneratePage() {
     setImageEditPrompt('')
     setSavedPost(null)
     setDraftId(null)
+    setScheduledAt(null)
     setThemeSuggestions([])
     setReferencePost('')
     setSelectedRefAccount('')
@@ -311,6 +346,7 @@ export default function XGeneratePage() {
     return (
       <DoneScreen
         posted={savedPost?.status === 'posted'}
+        scheduledAt={scheduledAt}
         platformLabel="X"
         onReset={handleReset}
       />
@@ -540,30 +576,15 @@ export default function XGeneratePage() {
           />
 
           {/* アクション */}
-          <div className="flex gap-3">
-            <Button variant="secondary" onClick={() => handleSave(false)} disabled={loading} className="flex-1 gap-2">
-              <Save className="h-4 w-4" />
-              下書き保存
-            </Button>
-            {!isDemoMode && (
-              <Button
-                onClick={() => handleSave(true)}
-                disabled={loading || xOver}
-                isLoading={loading}
-                loadingText="投稿中..."
-                className="flex-1 gap-2"
-              >
-                <Send className="h-4 w-4" />
-                今すぐ投稿
-              </Button>
-            )}
-          </div>
-          {/* 超過時の理由（色だけの警告は見落とされやすいので明示） */}
-          {!isDemoMode && xOver && (
-            <p className="mt-2 text-right text-xs text-red-500">
-              {postMode === 'thread' ? '280字を超えているツイートがあります（赤字の件を短くしてください）' : '280字を超えています。短くすると投稿できます'}
-            </p>
-          )}
+          <GenerateActions
+            loading={loading}
+            isDemoMode={isDemoMode}
+            onSaveDraft={() => handleSave(false)}
+            onPublishNow={() => handleSave(true)}
+            onSchedule={handleSchedule}
+            actionDisabled={xOver}
+            actionDisabledReason={postMode === 'thread' ? '280字を超えているツイートがあります（赤字の件を短くしてください）' : '280字を超えています。短くすると投稿できます'}
+          />
         </div>
       )}
     </GenerateLayout>

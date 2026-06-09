@@ -2,9 +2,10 @@
 
 // 3つの投稿生成ページ（Threads / Instagram / X）で共通利用する UI 部品。
 // アクセント色はアプリ基調のティール #00A3BF に統一し、各SNSの差は「本物のロゴ」だけで表現する。
+import { useMemo, useState } from 'react'
 import Link from 'next/link'
 import {
-  Sparkles, ChevronLeft, CheckCircle, Lightbulb,
+  Sparkles, ChevronLeft, CheckCircle, Lightbulb, Save, Send, CalendarClock,
 } from 'lucide-react'
 import { Card } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
@@ -98,31 +99,163 @@ export function GenerateHeader({
   )
 }
 
-// ── 完了画面（保存／投稿後・全SNS共通） ───────────────────────
+// 予約日時を日本語ロケールで表示用に整形（例: 6月9日(火) 22:30）
+function formatScheduled(iso: string): string {
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return ''
+  return d.toLocaleString('ja-JP', {
+    month: 'long', day: 'numeric', weekday: 'short', hour: '2-digit', minute: '2-digit',
+  })
+}
+
+// ── 完了画面（保存／投稿／予約後・全SNS共通） ─────────────────
 export function DoneScreen({
-  posted, platformLabel, onReset,
+  posted, scheduledAt, platformLabel, onReset,
 }: {
   posted: boolean
+  /** 予約完了時の予約日時(ISO)。指定があれば「予約しました」表示にする */
+  scheduledAt?: string | null
   platformLabel: string
   onReset: () => void
 }) {
+  const scheduled = !!scheduledAt
+  const title = scheduled ? '予約しました！' : posted ? '投稿しました！' : '保存しました！'
+  const subtitle = scheduled
+    ? `${formatScheduled(scheduledAt!)} に ${platformLabel} へ自動投稿されます`
+    : posted ? `${platformLabel}に投稿されました` : '下書きとして保存されました'
   return (
     <div className="mx-auto max-w-2xl p-6 lg:p-8">
       <Card className="py-12 text-center">
-        <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-green-50">
-          <CheckCircle className="h-6 w-6 text-green-600" />
+        <div className={cx(
+          'mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full',
+          scheduled ? 'bg-[#E9F7F9]' : 'bg-green-50',
+        )}>
+          {scheduled
+            ? <CalendarClock className="h-6 w-6 text-[#006F83]" />
+            : <CheckCircle className="h-6 w-6 text-green-600" />}
         </div>
-        <h2 className="text-lg font-semibold text-gray-900">
-          {posted ? '投稿しました！' : '保存しました！'}
-        </h2>
-        <p className="mt-1 text-sm text-gray-500">
-          {posted ? `${platformLabel}に投稿されました` : '下書きとして保存されました'}
-        </p>
-        <Button onClick={onReset} className="mt-6 gap-2">
-          <Sparkles className="h-4 w-4" />
-          新しい投稿を生成する
-        </Button>
+        <h2 className="text-lg font-semibold text-gray-900">{title}</h2>
+        <p className="mt-1 text-sm text-gray-500">{subtitle}</p>
+        <div className="mt-6 flex flex-wrap items-center justify-center gap-3">
+          <Button onClick={onReset} className="gap-2">
+            <Sparkles className="h-4 w-4" />
+            新しい投稿を生成する
+          </Button>
+          {scheduled && (
+            <Link
+              href="/dashboard/drafts"
+              className="text-sm font-medium text-[#006F83] hover:underline"
+            >
+              予約一覧で確認・変更する →
+            </Link>
+          )}
+        </div>
       </Card>
+    </div>
+  )
+}
+
+// datetime-local 入力用に Date → "YYYY-MM-DDTHH:mm"（ローカル時刻）へ
+function toLocalInputValue(d: Date): string {
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
+
+// ── アクション行（下書き保存 / 予約投稿 / 今すぐ投稿・全SNS共通） ──
+// 予約投稿ボタンを押すと日時ピッカーが開き、確定すると onSchedule(ISO文字列) を呼ぶ。
+// publish と予約は同じ前提（アカウント選択・文字数・画像など）を満たす必要があるため、
+// actionDisabled で両方をまとめて無効化する。
+export function GenerateActions({
+  loading, isDemoMode, onSaveDraft, onPublishNow, onSchedule,
+  saveDisabled = false, actionDisabled = false, actionDisabledReason, publishLabel = '今すぐ投稿',
+}: {
+  loading: boolean
+  isDemoMode: boolean
+  onSaveDraft: () => void
+  onPublishNow: () => void
+  onSchedule: (iso: string) => void
+  saveDisabled?: boolean
+  actionDisabled?: boolean
+  actionDisabledReason?: string
+  publishLabel?: string
+}) {
+  const [scheduling, setScheduling] = useState(false)
+  const [when, setWhen] = useState('')
+  const [err, setErr] = useState('')
+  // 過去日時を選びにくくする目安（1分後）。厳密な検証は confirm 時にも行う。
+  const minLocal = useMemo(() => toLocalInputValue(new Date(Date.now() + 60_000)), [])
+
+  function confirmSchedule() {
+    setErr('')
+    const d = new Date(when)
+    if (!when || Number.isNaN(d.getTime())) { setErr('予約日時を入力してください'); return }
+    if (d.getTime() < Date.now()) { setErr('未来の日時を指定してください'); return }
+    onSchedule(d.toISOString())
+  }
+
+  return (
+    <div className="space-y-3">
+      <div className="flex flex-wrap gap-3">
+        <Button variant="secondary" onClick={onSaveDraft} disabled={loading || saveDisabled} className="flex-1 gap-2">
+          <Save className="h-4 w-4" />
+          下書き保存
+        </Button>
+        {!isDemoMode && (
+          <Button
+            variant="secondary"
+            onClick={() => { setErr(''); setScheduling(v => !v) }}
+            disabled={loading || actionDisabled}
+            aria-expanded={scheduling}
+            className="flex-1 gap-2"
+          >
+            <CalendarClock className="h-4 w-4" />
+            予約投稿
+          </Button>
+        )}
+        {!isDemoMode && (
+          <Button
+            onClick={onPublishNow}
+            disabled={loading || actionDisabled}
+            isLoading={loading && !scheduling}
+            loadingText="投稿中..."
+            className="flex-1 gap-2"
+          >
+            <Send className="h-4 w-4" />
+            {publishLabel}
+          </Button>
+        )}
+      </div>
+
+      {/* 投稿/予約が無効な理由（色だけの警告は見落とされやすいので明示） */}
+      {!isDemoMode && actionDisabled && actionDisabledReason && (
+        <p className="text-right text-xs text-red-500">{actionDisabledReason}</p>
+      )}
+
+      {/* 予約日時ピッカー */}
+      {!isDemoMode && scheduling && (
+        <div className="space-y-2 rounded-lg border border-[#e5edf5] bg-[#F8FAFC] p-4">
+          <SectionLabel>予約日時</SectionLabel>
+          <input
+            type="datetime-local"
+            value={when}
+            min={minLocal}
+            onChange={e => { setWhen(e.target.value); setErr('') }}
+            aria-label="予約日時"
+            className={INPUT_CLASS}
+          />
+          {err && <p className="text-xs text-red-500">{err}</p>}
+          <p className="text-[11px] text-gray-500">指定した日時に自動で投稿されます（サーバーが毎分チェック）。</p>
+          <div className="flex justify-end gap-2 pt-1">
+            <Button variant="secondary" onClick={() => setScheduling(false)} disabled={loading}>
+              キャンセル
+            </Button>
+            <Button onClick={confirmSchedule} disabled={loading || !when} isLoading={loading} loadingText="予約中..." className="gap-1">
+              <CalendarClock className="h-4 w-4" />
+              この日時で予約
+            </Button>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
