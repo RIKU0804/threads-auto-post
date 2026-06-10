@@ -5,7 +5,7 @@
 import { useMemo, useState } from 'react'
 import Link from 'next/link'
 import {
-  Sparkles, ChevronLeft, CheckCircle, Lightbulb, Save, Send, CalendarClock,
+  Sparkles, ChevronLeft, CheckCircle, Lightbulb, Save, Send, CalendarClock, PenLine,
 } from 'lucide-react'
 import { Card } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
@@ -434,6 +434,39 @@ export function GenerateButton({
         </p>
       )}
     </div>
+  )
+}
+
+// ── 「自分で書く」入口（AI生成をスキップして空のプレビューへ・全SNS共通） ──
+// クライアントが自分で用意した文章を貼り付けて投稿できるようにするための導線。
+export function ManualComposeEntry({ onClick }: { onClick: () => void }) {
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center gap-3">
+        <div className="h-px flex-1 bg-[#e5edf5]" />
+        <span className="text-xs text-gray-400">または</span>
+        <div className="h-px flex-1 bg-[#e5edf5]" />
+      </div>
+      <button
+        type="button"
+        onClick={onClick}
+        className="flex w-full items-center justify-center gap-2 rounded-lg border border-[#e5edf5] bg-white py-2.5 text-sm font-medium text-gray-700 transition hover:border-[#00A3BF] hover:text-[#006F83]"
+      >
+        <PenLine className="h-4 w-4" />
+        自分で書いて投稿（テキストを貼り付け）
+      </button>
+      <p className="text-center text-xs text-gray-400">AIを使わず、用意した文章をそのまま投稿・予約できます</p>
+    </div>
+  )
+}
+
+// ── 「自分で書くモード」バッジ（プレビュー上部・全SNS共通） ──
+export function ManualModeBadge() {
+  return (
+    <span className="inline-flex items-center gap-1 rounded-full bg-[#E9F7F9] px-2.5 py-1 text-xs font-medium text-[#006F83]">
+      <PenLine className="h-3 w-3" />
+      自分で書くモード
+    </span>
   )
 }
 

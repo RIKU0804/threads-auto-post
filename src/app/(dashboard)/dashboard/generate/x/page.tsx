@@ -7,6 +7,7 @@ import { Textarea } from '@/components/ui/Textarea'
 import {
   GenerateLayout, GenerateHeader, DoneScreen, DemoModeNotice,
   ThemeField, PostTypeGrid, ThemePreviewRow, GenerateButton, GenerateActions,
+  ManualComposeEntry, ManualModeBadge,
   SectionLabel, CharCounter, SELECT_CLASS, type PostTypeOption,
 } from '@/components/generate/GenerateParts'
 import { ReferencePanel, type ReferenceImage } from '@/components/generate/ReferencePanel'
@@ -38,6 +39,7 @@ export default function XGeneratePage() {
   const [postType, setPostType] = useState<string>('')
   const [postMode, setPostMode] = useState<PostMode>('single')
   const [step, setStep] = useState<Step>('input')
+  const [manualMode, setManualMode] = useState(false)
   const [loading, setLoading] = useState(false)
 
   // single mode
@@ -99,6 +101,10 @@ export default function XGeneratePage() {
   const xOver = postMode === 'thread'
     ? threadParts.some(p => [...p].length > X_LIMIT)
     : [...generatedText].length > X_LIMIT
+  // 本文が空（自分で書くモードで未入力のまま投稿しようとしたケースを防ぐ）
+  const xEmpty = postMode === 'thread'
+    ? !threadParts.some(p => p.trim())
+    : !generatedText.trim()
 
   async function handleGenerate(overrideTheme?: string) {
     const targetTheme = overrideTheme ?? theme
@@ -324,6 +330,7 @@ export default function XGeneratePage() {
 
   function handleReset() {
     setStep('input')
+    setManualMode(false)
     setTheme('')
     setPostType('')
     setGeneratedText('')
@@ -340,6 +347,21 @@ export default function XGeneratePage() {
     setSelectedRefAccount('')
     setShowReference(false)
     setReferenceImage(null)
+  }
+
+  // AI生成をスキップして「自分で書く」プレビューへ。現在の投稿モード(単発/スレッド)のまま空欄で開く。
+  function startManual() {
+    setManualMode(true)
+    setTheme('')
+    setPostType('')
+    setGeneratedText('')
+    setThreadParts([''])
+    setGeneratedSummary('')
+    setImageUrl('')
+    setImagePrompt('')
+    setImageEditPrompt('')
+    setDraftId(null)
+    setStep('preview')
   }
 
   if (step === 'done') {
@@ -446,6 +468,8 @@ export default function XGeneratePage() {
           />
 
           <GenerateButton onGenerate={() => handleGenerate()} disabled={!theme.trim()} loading={loading} />
+
+          <ManualComposeEntry onClick={startManual} />
         </div>
       )}
 
@@ -454,22 +478,31 @@ export default function XGeneratePage() {
         <div className="space-y-4">
           {isDemoMode && <DemoModeNotice />}
 
-          <ThemePreviewRow
-            theme={theme}
-            onEdit={() => setStep('input')}
-            badges={
-              <>
-                <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[10px] font-medium text-gray-600">
-                  {postMode === 'thread' ? `スレッド ${threadParts.length}件` : '単発'}
-                </span>
-                {hasReference && (
-                  <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-medium text-amber-600">
-                    参考{referencePost.trim() && referenceImage ? '投稿+画像' : referenceImage ? '画像' : '投稿'}あり
+          {manualMode ? (
+            <div className="flex items-center gap-2">
+              <ManualModeBadge />
+              <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[10px] font-medium text-gray-600">
+                {postMode === 'thread' ? `スレッド ${threadParts.length}件` : '単発'}
+              </span>
+            </div>
+          ) : (
+            <ThemePreviewRow
+              theme={theme}
+              onEdit={() => setStep('input')}
+              badges={
+                <>
+                  <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[10px] font-medium text-gray-600">
+                    {postMode === 'thread' ? `スレッド ${threadParts.length}件` : '単発'}
                   </span>
-                )}
-              </>
-            }
-          />
+                  {hasReference && (
+                    <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-medium text-amber-600">
+                      参考{referencePost.trim() && referenceImage ? '投稿+画像' : referenceImage ? '画像' : '投稿'}あり
+                    </span>
+                  )}
+                </>
+              }
+            />
+          )}
 
           {/* 単発ツイート */}
           {postMode === 'single' && (
@@ -485,16 +518,19 @@ export default function XGeneratePage() {
                     <Scissors className="h-3 w-3" />
                     スレッド化
                   </button>
-                  <button onClick={() => handleGenerate()} disabled={loading} className="flex items-center gap-1 text-xs font-medium text-[#006F83] transition-colors hover:text-[#005A6B] disabled:opacity-50">
-                    <RefreshCw className={cx('h-3 w-3', loading && 'animate-spin')} />
-                    再生成
-                  </button>
+                  {!manualMode && (
+                    <button onClick={() => handleGenerate()} disabled={loading} className="flex items-center gap-1 text-xs font-medium text-[#006F83] transition-colors hover:text-[#005A6B] disabled:opacity-50">
+                      <RefreshCw className={cx('h-3 w-3', loading && 'animate-spin')} />
+                      再生成
+                    </button>
+                  )}
                 </div>
               </div>
               <Textarea
                 value={generatedText}
                 onChange={e => setGeneratedText(e.target.value)}
                 rows={6}
+                placeholder={manualMode ? 'ここにツイート本文を貼り付け、または入力してください' : undefined}
                 className="resize-none border-none bg-transparent p-0 shadow-none focus:ring-0"
               />
               <div className="flex items-center justify-end border-t border-gray-100 pt-2">
@@ -513,10 +549,12 @@ export default function XGeneratePage() {
                     {threadParts.length} 件のツイート
                   </span>
                 </div>
-                <button onClick={() => handleGenerate()} disabled={loading} className="flex items-center gap-1 text-xs font-medium text-[#006F83] transition-colors hover:text-[#005A6B] disabled:opacity-50">
-                  <RefreshCw className={cx('h-3 w-3', loading && 'animate-spin')} />
-                  再生成
-                </button>
+                {!manualMode && (
+                  <button onClick={() => handleGenerate()} disabled={loading} className="flex items-center gap-1 text-xs font-medium text-[#006F83] transition-colors hover:text-[#005A6B] disabled:opacity-50">
+                    <RefreshCw className={cx('h-3 w-3', loading && 'animate-spin')} />
+                    再生成
+                  </button>
+                )}
               </div>
 
               {threadParts.map((part, i) => (
@@ -537,6 +575,7 @@ export default function XGeneratePage() {
                     value={part}
                     onChange={e => setThreadParts(prev => prev.map((p, j) => j === i ? e.target.value : p))}
                     rows={4}
+                    placeholder={manualMode ? `${i + 1}件目のツイートを入力` : undefined}
                     className="resize-none border-none bg-transparent p-0 text-sm shadow-none focus:ring-0"
                   />
                   <div className="flex justify-end border-t border-gray-100 pt-1.5">
@@ -582,8 +621,13 @@ export default function XGeneratePage() {
             onSaveDraft={() => handleSave(false)}
             onPublishNow={() => handleSave(true)}
             onSchedule={handleSchedule}
-            actionDisabled={xOver}
-            actionDisabledReason={postMode === 'thread' ? '280字を超えているツイートがあります（赤字の件を短くしてください）' : '280字を超えています。短くすると投稿できます'}
+            saveDisabled={xEmpty}
+            actionDisabled={xOver || xEmpty}
+            actionDisabledReason={xEmpty
+              ? '投稿文を入力してください'
+              : xOver
+                ? (postMode === 'thread' ? '280字を超えているツイートがあります（赤字の件を短くしてください）' : '280字を超えています。短くすると投稿できます')
+                : undefined}
           />
         </div>
       )}

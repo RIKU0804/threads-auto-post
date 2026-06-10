@@ -8,6 +8,7 @@ import { Textarea } from '@/components/ui/Textarea'
 import {
   GenerateLayout, GenerateHeader, DoneScreen, DemoModeNotice,
   ThemeField, PostTypeGrid, ThemePreviewRow, GenerateButton, GenerateActions,
+  ManualComposeEntry, ManualModeBadge,
   SectionLabel, CharCounter, SELECT_CLASS, type PostTypeOption,
 } from '@/components/generate/GenerateParts'
 import { ReferencePanel, type ReferenceImage } from '@/components/generate/ReferencePanel'
@@ -39,6 +40,7 @@ export default function InstagramGeneratePage() {
   const [theme, setTheme] = useState('')
   const [postType, setPostType] = useState<PostType | ''>('')
   const [step, setStep] = useState<Step>('input')
+  const [manualMode, setManualMode] = useState(false)
   const [loading, setLoading] = useState(false)
   const [generatedText, setGeneratedText] = useState('')
   const [generatedSummary, setGeneratedSummary] = useState('')
@@ -284,6 +286,7 @@ export default function InstagramGeneratePage() {
 
   function handleReset() {
     setStep('input')
+    setManualMode(false)
     setTheme('')
     setPostType('')
     setGeneratedText('')
@@ -299,6 +302,20 @@ export default function InstagramGeneratePage() {
     setSelectedRefAccount('')
     setShowReference(false)
     setReferenceImage(null)
+  }
+
+  // AI生成をスキップして「自分で書く」プレビューへ。キャプションを貼り付け、画像はAIで生成する。
+  function startManual() {
+    setManualMode(true)
+    setTheme('')
+    setPostType('')
+    setGeneratedText('')
+    setGeneratedSummary('')
+    setImageUrl('')
+    setImagePrompt('')
+    setImageEditPrompt('')
+    setDraftId(null)
+    setStep('preview')
   }
 
   if (step === 'done') {
@@ -383,6 +400,8 @@ export default function InstagramGeneratePage() {
           />
 
           <GenerateButton onGenerate={() => handleGenerate()} disabled={!theme.trim()} loading={loading} />
+
+          <ManualComposeEntry onClick={startManual} />
         </div>
       )}
 
@@ -391,15 +410,19 @@ export default function InstagramGeneratePage() {
         <div className="space-y-4">
           {isDemoMode && <DemoModeNotice />}
 
-          <ThemePreviewRow
-            theme={theme}
-            onEdit={() => setStep('input')}
-            badges={hasReference && (
-              <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-medium text-amber-600">
-                参考{referencePost.trim() && referenceImage ? '投稿+画像' : referenceImage ? '画像' : '投稿'}あり
-              </span>
-            )}
-          />
+          {manualMode ? (
+            <div className="flex items-center"><ManualModeBadge /></div>
+          ) : (
+            <ThemePreviewRow
+              theme={theme}
+              onEdit={() => setStep('input')}
+              badges={hasReference && (
+                <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-medium text-amber-600">
+                  参考{referencePost.trim() && referenceImage ? '投稿+画像' : referenceImage ? '画像' : '投稿'}あり
+                </span>
+              )}
+            />
+          )}
 
           {/* 画像（Instagram は画像必須） */}
           <ImagePanel
@@ -425,15 +448,18 @@ export default function InstagramGeneratePage() {
           <Card className="space-y-3">
             <div className="flex items-center justify-between">
               <SectionLabel>キャプション</SectionLabel>
-              <button onClick={() => handleGenerate()} disabled={loading} className="flex items-center gap-1 text-xs font-medium text-[#006F83] transition-colors hover:text-[#005A6B] disabled:opacity-50">
-                <RefreshCw className={cx('h-3 w-3', loading && 'animate-spin')} />
-                再生成
-              </button>
+              {!manualMode && (
+                <button onClick={() => handleGenerate()} disabled={loading} className="flex items-center gap-1 text-xs font-medium text-[#006F83] transition-colors hover:text-[#005A6B] disabled:opacity-50">
+                  <RefreshCw className={cx('h-3 w-3', loading && 'animate-spin')} />
+                  再生成
+                </button>
+              )}
             </div>
             <Textarea
               value={generatedText}
               onChange={e => setGeneratedText(e.target.value)}
               rows={9}
+              placeholder={manualMode ? 'ここにキャプションを貼り付け、または入力してください' : undefined}
               className="resize-none border-none bg-transparent p-0 shadow-none focus:ring-0"
             />
             <div className="flex items-center justify-end border-t border-gray-100 pt-2">
@@ -448,10 +474,11 @@ export default function InstagramGeneratePage() {
             onSaveDraft={() => handleSave(false)}
             onPublishNow={() => handleSave(true)}
             onSchedule={handleSchedule}
-            saveDisabled={captionOver}
-            actionDisabled={!imageUrl || captionOver}
+            saveDisabled={captionOver || !generatedText.trim()}
+            actionDisabled={!imageUrl || captionOver || !generatedText.trim()}
             actionDisabledReason={captionOver
               ? `キャプションが${IG_CAPTION_MAX}文字を超えています`
+              : !generatedText.trim() ? 'キャプションを入力してください'
               : !imageUrl ? '画像を生成すると投稿・予約できます' : undefined}
           />
         </div>
